@@ -1,0 +1,28 @@
+{
+  "name": "payitgo",
+  "version": "0.1.0",
+  "description": "Node.js library for the payitgo crypto payment gateway",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/thedivinez/payitgo-sdk.git", "directory": "node" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./esm/index.d.mts", "default": "./esm/index.mjs" },
+      "require": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "esm"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.js test/*.test.mjs",
+    "prepare": "npm run build"
+  },
+  "keywords": ["payitgo", "payments", "crypto", "usdt", "bitcoin"],
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
