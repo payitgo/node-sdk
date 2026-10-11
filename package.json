@@ -1,8 +1,10 @@
 {
-  "name": "payitgo",
+  "name": "@payitgo/node",
   "version": "0.1.1",
   "description": "Node.js library for the payitgo crypto payment gateway",
   "license": "MIT",
+  "author": "payitgo (https://payitgo.co)",
+  "homepage": "https://payitgo.co",
   "repository": { "type": "git", "url": "git+https://github.com/payitgo/node-sdk.git" },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
