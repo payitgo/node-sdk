@@ -6,19 +6,19 @@ included, no runtime dependencies.
 Full reference, with every method, option, type and error: [api.payitgo.co/docs/sdk-node](https://api.payitgo.co/docs/sdk-node).
 
 ```bash
-npm install payitgo
+npm install @payitgo/node
 ```
 
 ```ts
-import Payitgo from "payitgo";              // ES modules and TypeScript; also { Payitgo, PayitgoError, … }
-const { Payitgo } = require("payitgo");     // CommonJS
+import Payitgo from "@payitgo/node";              // ES modules and TypeScript; also { Payitgo, PayitgoError, … }
+const { Payitgo } = require("@payitgo/node");     // CommonJS
 ```
 
 ## Accept a payment in three steps
 
 ```ts
 import express from "express";
-import { Payitgo } from "payitgo";
+import { Payitgo } from "@payitgo/node";
 
 const payitgo = new Payitgo(process.env.PAYITGO_KEY!, {
   baseUrl: process.env.PAYITGO_BASE_URL,
@@ -178,7 +178,7 @@ see the [payment object](https://api.payitgo.co/docs/payments) and [webhooks](ht
 ## Errors
 
 ```ts
-import { PayitgoError, SignatureVerificationError } from "payitgo";
+import { PayitgoError, SignatureVerificationError } from "@payitgo/node";
 
 try {
   await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 1, token: "BTC" });

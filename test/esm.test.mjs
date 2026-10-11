@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { createRequire } from "node:module";
 
 // The package by its own name: the ES module entry point of package.json's "exports".
-import Payitgo, { Payitgo as NamedPayitgo, PayitgoError, SignatureVerificationError, webhooks, VERSION } from "payitgo";
+import Payitgo, { Payitgo as NamedPayitgo, PayitgoError, SignatureVerificationError, webhooks, VERSION } from "@payitgo/node";
 
 test("ES modules: the default export is the Payitgo class", () => {
   assert.equal(typeof Payitgo, "function");
@@ -16,7 +16,7 @@ test("ES modules: the default export is the Payitgo class", () => {
 });
 
 test("ES modules and CommonJS share one implementation", () => {
-  const cjs = createRequire(import.meta.url)("payitgo");
+  const cjs = createRequire(import.meta.url)("@payitgo/node");
   assert.equal(cjs.Payitgo, Payitgo);
   assert.equal(cjs.default, Payitgo);
   assert.equal(cjs.PayitgoError, PayitgoError);
