@@ -196,7 +196,7 @@ const CHOSEN = {
   deposits: [],
   expires_at: "2026-10-10T12:15:00Z",
   created_at: "2026-10-10T12:00:00Z",
-  network_fee_note: "XRP Ledger testnet: test XRP only. Include destination tag — required.",
+  network_fee_note: "Near-zero fees. Include destination tag — required.",
   qr_payload: "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe",
   checkout_token: "ct_abc",
   checkout_url: "https://pay.example/ct_abc",
@@ -229,6 +229,76 @@ test("payments.selectToken: a coin already chosen is a 409", async (t) => {
     assert.equal(e.message, "the coin for this payment has already been chosen");
     return true;
   });
+});
+
+// A test payment whose simulated outcome has paid it.
+const SIMULATED = {
+  id: "pay_2",
+  merchant_id: "mch_1",
+  order_id: "ORD-8",
+  status: "detecting",
+  livemode: false,
+  simulation: { outcome: "confirmed", state: "running" },
+  token: "USDT_TRC20",
+  chain: "tron",
+  deposit_address: "TPk2bpQqWRpXiaUHS9SXnZCDgvwrsuJ71o",
+  crypto_amount: "20",
+  received_amount: "20",
+  usd_amount: "20",
+  amount_due_usd: "20",
+  fees_paid_by_customer: false,
+  network_fee: "1",
+  network_fee_usd: "0.3",
+  settlement: "custodial",
+  received_usd: "20",
+  rate_locked: "1",
+  deposits: [
+    {
+      tx_id: "sim_pay_2_1791817211348_0", token: "USDT_TRC20", chain: "tron", amount: "20", usd_value: "20",
+      counted: true, status: "pending", seen_at: "2026-10-10T12:00:05Z", simulated: true,
+    },
+  ],
+  expires_at: "2026-10-10T12:15:00Z",
+  created_at: "2026-10-10T12:00:00Z",
+  network_fee_note: "Near-zero fees on Tron. Fastest settlement.",
+  qr_payload: "TPk2bpQqWRpXiaUHS9SXnZCDgvwrsuJ71o",
+};
+
+test("payments.simulate posts the outcome with the key and returns the payment with its simulation", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(200, SIMULATED);
+  const payment = await payitgo.payments.simulate("pay_2", "confirmed");
+  assert.equal(requests[0].method, "POST");
+  assert.equal(requests[0].url, "/v1/payments/pay_2/simulate");
+  assert.equal(requests[0].headers.authorization, "Bearer sk_test_abc");
+  assert.equal(requests[0].headers["content-type"], "application/json");
+  assert.deepEqual(requests[0].body, { outcome: "confirmed" });
+  assert.deepEqual(payment, SIMULATED);
+  assert.deepEqual(payment.simulation, { outcome: "confirmed", state: "running" });
+  assert.equal(payment.deposits[0].simulated, true);
+  // An order id is escaped in the path, as payments.retrieve does.
+  reply(200, SIMULATED);
+  await payitgo.payments.simulate("ORD 8/1", "expired");
+  assert.equal(requests[1].url, "/v1/payments/ORD%208%2F1/simulate");
+});
+
+test("payments.simulate: a simulation still running is a 409", async (t) => {
+  const { payitgo, reply } = await fakeGateway(t);
+  reply(409, { error: "a simulation is already running for this payment" });
+  await assert.rejects(payitgo.payments.simulate("pay_2", "confirmed"), (e) => {
+    assert.ok(e instanceof PayitgoError);
+    assert.equal(e.status, 409);
+    assert.equal(e.message, "a simulation is already running for this payment");
+    return true;
+  });
+});
+
+test("payments.create sends simulate", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(201, SIMULATED);
+  const payment = await payitgo.payments.create({ order_id: "ORD-8", amount_usd: 20, token: "USDT_TRC20", simulate: "confirmed" });
+  assert.deepEqual(requests[0].body, { order_id: "ORD-8", amount_usd: 20, token: "USDT_TRC20", simulate: "confirmed" });
+  assert.deepEqual(payment.simulation, { outcome: "confirmed", state: "running" });
 });
 
 test("tokens.list: every token, or a payment of an amount's options", async (t) => {

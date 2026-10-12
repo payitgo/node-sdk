@@ -16,6 +16,24 @@ export type PaymentStatus =
   | "expired"
   | "failed";
 
+/** An outcome a test payment can be made to go through: see `payments.simulate`. */
+export type SimulationOutcome =
+  | "confirmed"
+  | "overpaid"
+  | "partially_paid"
+  | "underpaid"
+  | "expired"
+  | "failed"
+  | "wrong_asset"
+  | "paid_late";
+
+/** A test payment's simulated outcome, and how far it is. */
+export interface Simulation {
+  outcome: SimulationOutcome;
+  /** requested (asked for on create, waiting for the coin), running or done. */
+  state: "requested" | "running" | "done";
+}
+
 /** One transfer to a payment's address. */
 export interface Deposit {
   tx_id: string;
@@ -44,6 +62,8 @@ export interface Deposit {
   failed_at?: string;
   /** Why it failed: "transaction not found on chain" or "confirmation timeout". */
   fail_reason?: string;
+  /** Played by a test payment's simulation: its tx_id starts with "sim_" and is on no chain. */
+  simulated?: boolean;
 }
 
 /** A payment, as the API returns it. Amounts are decimal strings. */
@@ -54,6 +74,8 @@ export interface Payment {
   order_id: string;
   status: PaymentStatus;
   livemode: boolean;
+  /** A test payment's simulated outcome, when it has one. */
+  simulation?: Simulation;
   /** Empty until the customer chooses the coin (see token_options). */
   token: string;
   chain: string;
@@ -116,6 +138,11 @@ export interface CreatePaymentParams {
    * instead of the webhook's URL, signed with the same secret. Default: the client's `webhookUrl`.
    */
   webhook_url?: string;
+  /**
+   * Test keys only: the outcome to simulate, as `payments.simulate` does. With `token` it
+   * starts at once; without, once the coin is chosen.
+   */
+  simulate?: SimulationOutcome;
 }
 
 export interface ListPaymentsParams {
@@ -417,6 +444,16 @@ class Payments {
    */
   selectToken(id: string, token: string): Promise<Payment> {
     return this.client.request("POST", `/v1/payments/${encodeURIComponent(id)}/token`, { token });
+  }
+
+  /**
+   * Plays an outcome on a test payment: payitgo sends its deposits, status changes and
+   * webhooks a few seconds apart, with no coins. `id` is the payment's id (pay_…) or your
+   * order id. Returns the whole payment, with its `simulation`. A live payment is a 400;
+   * a simulation that is still running, a 409.
+   */
+  simulate(id: string, outcome: SimulationOutcome): Promise<Payment> {
+    return this.client.request("POST", `/v1/payments/${encodeURIComponent(id)}/simulate`, { outcome });
   }
 
   /** Payments of the key's mode, newest first. */
