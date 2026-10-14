@@ -444,14 +444,14 @@ class Payments {
     return this.client.request("POST", "/v1/payments", webhook_url ? { ...params, webhook_url } : params);
   }
 
-  /** A payment by its id (pay_…) or by your order id (the order's open payment). */
+  /** A payment by its id or by your order id (the order's open payment). */
   retrieve(id: string): Promise<Payment> {
     return this.client.request("GET", `/v1/payments/${encodeURIComponent(id)}`);
   }
 
   /**
    * Sets the coin of a payment created without one, when the customer chose it on your
-   * own page: one of its `token_options`. `id` is the payment's id (pay_…) or your order id.
+   * own page: one of its `token_options`. `id` is the payment's id or your order id.
    * Returns the whole payment, now with its address, amount, locked rate and a deadline
    * 15 minutes away. The coin is chosen once: choosing again is a 409.
    */
@@ -461,7 +461,7 @@ class Payments {
 
   /**
    * Plays an outcome on a test payment: payitgo sends its deposits, status changes and
-   * webhooks a few seconds apart, with no coins. `id` is the payment's id (pay_…) or your
+   * webhooks a few seconds apart, with no coins. `id` is the payment's id or your
    * order id. Returns the whole payment, with its `simulation`. A live payment is a 400;
    * a simulation that is still running, a 409.
    */
