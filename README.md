@@ -201,10 +201,10 @@ payitgo.livemode;                                     // false for sk_test_ keys
 await payitgo.payments.create({ order_id, amount_usd, token, description?, metadata?,
                               customer_email?, success_url?, cancel_url?, webhook_url?, simulate? });
 await payitgo.payments.create({ order_id, price_amount, price_currency, … }); // priced in another currency
-await payitgo.payments.selectToken("pay_…", token);   // or your order id: the payment with its coin
-await payitgo.payments.simulate("pay_…", "confirmed"); // test keys: plays the outcome
-await payitgo.payments.retrieve("pay_…");             // or your order id
-await payitgo.payments.list({ status: "confirmed", store_id: "sto_…", limit: 50, offset: 0 }); // every filter optional
+await payitgo.payments.selectToken(paymentId, token); // or your order id: the payment with its coin
+await payitgo.payments.simulate(paymentId, "confirmed"); // test keys: plays the outcome
+await payitgo.payments.retrieve(paymentId);           // or your order id
+await payitgo.payments.list({ status: "confirmed", store_id: storeId, limit: 50, offset: 0 }); // every filter optional
 await payitgo.tokens.list();                          // [{ token, chain, min_usd, network_fee_usd, fee_note }]
 await payitgo.tokens.list({ amount_usd: "49.90" });   // the coins a $49.90 payment offers, with amount_due_usd
 await payitgo.checkout.retrieve(checkoutToken);       // public payer view
