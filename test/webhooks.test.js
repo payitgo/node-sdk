@@ -301,6 +301,44 @@ test("payments.create sends simulate", async (t) => {
   assert.deepEqual(payment.simulation, { outcome: "confirmed", state: "running" });
 });
 
+// A payment priced in euros: the gateway converted the price into usd_amount at price_rate.
+const PRICED = {
+  ...CHOSEN,
+  order_id: "ORD-10",
+  usd_amount: "49.23",
+  amount_due_usd: "49.23",
+  price_amount: "45.5",
+  price_currency: "EUR",
+  price_rate: "1.082",
+};
+
+test("payments.create sends a price in another currency, and the payment carries it", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(201, PRICED);
+  const payment = await payitgo.payments.create({ order_id: "ORD-10", price_amount: "45.50", price_currency: "eur" });
+  assert.deepEqual(requests[0].body, { order_id: "ORD-10", price_amount: "45.50", price_currency: "eur" });
+  assert.deepEqual(payment, PRICED);
+  assert.equal(payment.price_amount, "45.5");
+  assert.equal(payment.price_currency, "EUR");
+  assert.equal(payment.price_rate, "1.082");
+  assert.equal(payment.usd_amount, "49.23");
+  // A payment priced in dollars has none of them.
+  reply(200, CHOSEN);
+  const dollars = await payitgo.payments.retrieve("pay_1");
+  assert.equal("price_amount" in dollars || "price_currency" in dollars || "price_rate" in dollars, false);
+});
+
+test("payments.create: no exchange rate for the currency is a 503", async (t) => {
+  const { payitgo, reply } = await fakeGateway(t);
+  reply(503, { error: "exchange rate unavailable for price_currency: try again shortly" });
+  await assert.rejects(payitgo.payments.create({ order_id: "ORD-10", price_amount: 45.5, price_currency: "EUR" }), (e) => {
+    assert.ok(e instanceof PayitgoError);
+    assert.equal(e.status, 503);
+    assert.equal(e.message, "exchange rate unavailable for price_currency: try again shortly");
+    return true;
+  });
+});
+
 test("tokens.list: every token, or a payment of an amount's options", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
   const tokens = [{ token: "USDT_BEP20", chain: "bsc", min_usd: "1", network_fee_usd: "0.01", amount_due_usd: "40.43", fee_note: "" }];
