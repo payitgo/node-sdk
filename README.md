@@ -57,6 +57,28 @@ app.post("/payitgo/ipn", express.raw({ type: "application/json" }), (req, res) =
 Start with your test key (`sk_test_…`), where you [simulate](#test-mode) what the customer
 pays; switch to the live key (`sk_live_…`) when the account owner has turned live mode on.
 
+## Prices in other currencies
+
+To price a payment in your own currency, give `price_amount` and `price_currency` (an ISO
+4217 code such as `EUR`, `GBP` or `NGN`) instead of `amount_usd`. payitgo converts the price
+into dollars at the rate of the moment, and the payment keeps both:
+
+```ts
+const payment = await payitgo.payments.create({
+  order_id: "ORD-1002",
+  price_amount: "45.50",   // a string avoids float rounding; a number works too
+  price_currency: "EUR",   // any case
+});
+// payment.price_amount "45.5", payment.price_currency "EUR",
+// payment.price_rate "1.082" (dollars per euro), payment.usd_amount "49.23"
+```
+
+Everything else (`usd_amount`, `crypto_amount`, fees, minimums) stays in dollars; a payment
+priced in dollars has no `price_*` fields. Give `amount_usd` or the pair, not both (`400`).
+When no exchange rate can be had, `create` rejects with a `503` (`exchange rate unavailable
+for price_currency: try again shortly`) once the client's retries are spent: try again
+shortly.
+
 ## Your own payment page
 
 `checkout_url` is only for payitgo's hosted page. To show the payment on your own page,
@@ -178,6 +200,7 @@ const payitgo = new Payitgo(apiKey, {
 payitgo.livemode;                                     // false for sk_test_ keys
 await payitgo.payments.create({ order_id, amount_usd, token, description?, metadata?,
                               customer_email?, success_url?, cancel_url?, webhook_url?, simulate? });
+await payitgo.payments.create({ order_id, price_amount, price_currency, … }); // priced in another currency
 await payitgo.payments.selectToken("pay_…", token);   // or your order id: the payment with its coin
 await payitgo.payments.simulate("pay_…", "confirmed"); // test keys: plays the outcome
 await payitgo.payments.retrieve("pay_…");             // or your order id

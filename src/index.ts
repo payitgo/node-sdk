@@ -87,6 +87,12 @@ export interface Payment {
   received_amount: string;
   /** Your price. */
   usd_amount: string;
+  /** Your price as you gave it in another currency than the dollar; absent for a payment priced in dollars. */
+  price_amount?: string;
+  /** That currency's ISO 4217 code, upper case: "EUR". */
+  price_currency?: string;
+  /** The dollar value of one unit of `price_currency` that `usd_amount` was converted at. */
+  price_rate?: string;
   /** What the customer pays in dollars: the price, plus the fees when you pass them on. */
   amount_due_usd: string;
   fees_paid_by_customer: boolean;
@@ -122,8 +128,15 @@ export interface Payment {
 export interface CreatePaymentParams {
   /** Your id for the order; creating it again while it is open returns the same payment. */
   order_id: string;
-  /** The price in US dollars. */
-  amount_usd: number | string;
+  /** The price in US dollars. Leave it out to give `price_amount` and `price_currency` instead. */
+  amount_usd?: number | string;
+  /**
+   * The price in another currency than the dollar, with `price_currency`, instead of `amount_usd`:
+   * payitgo converts it into dollars at the rate of the moment.
+   */
+  price_amount?: number | string;
+  /** The ISO 4217 code of `price_amount`'s currency, e.g. "EUR", "GBP" or "NGN" (any case). */
+  price_currency?: string;
   /** A symbol from `tokens.list()`, e.g. "USDT_TRC20". Leave it out to let the customer choose on the checkout page. */
   token?: string;
   /** Without `token`: the coins to offer (default: every token the amount reaches the minimum of). */
