@@ -22,7 +22,7 @@ import { Payitgo } from "@payitgo/node";
 
 const payitgo = new Payitgo(process.env.PAYITGO_KEY!, {
   baseUrl: process.env.PAYITGO_BASE_URL,
-  webhookSecret: process.env.PAYITGO_WEBHOOK_SECRET, // "whsec_…": see Webhooks (IPN) below
+  webhookSecret: process.env.PAYITGO_WEBHOOK_SECRET, // the signing secret: see Webhooks (IPN) below
 });
 const app = express();
 
@@ -54,8 +54,10 @@ app.post("/payitgo/ipn", express.raw({ type: "application/json" }), (req, res) =
 });
 ```
 
-Start with your test key (`sk_test_…`), where you [simulate](#test-mode) what the customer
-pays; switch to the live key (`sk_live_…`) when the account owner has turned live mode on.
+Start with a test key, where you [simulate](#test-mode) what the customer pays; switch to
+a live key when the account owner has turned live mode on. A key does not say its mode
+(the dashboard shows a Test or Live badge next to it): `await payitgo.isLive()` asks
+payitgo, once.
 
 ## Prices in other currencies
 
@@ -120,8 +122,9 @@ const payment = await payitgo.payments.simulate("TEST-2", "partially_paid");
 ```
 
 Outcomes: `confirmed`, `overpaid`, `partially_paid`, `underpaid`, `expired`, `failed`,
-`wrong_asset`, `paid_late`. Simulated deposits have `simulated: true` and a `tx_id` starting
-with `sim_`. A live key gets `400`; a payment whose simulation is still running, `409`.
+`wrong_asset`, `paid_late`. Simulated deposits have `simulated: true`; their `tx_id` names
+no transaction on any chain. A live key gets `400`; a payment whose simulation is still
+running, `409`.
 
 ## Webhooks (IPN)
 
@@ -146,8 +149,8 @@ const shop = new Payitgo(process.env.PAYITGO_KEY!, { webhookUrl: "https://shop.e
 A storefront's key cannot set the account's URL (`403`): pass `webhook_url` instead.
 Payout events always go to the webhook's URL.
 
-**The signing secret.** Every notification of a mode is signed with that mode's secret
-(`whsec_…`), whichever URL it goes to. Copy it from the dashboard or read it with
+**The signing secret.** Every notification of a mode is signed with that mode's secret,
+whichever URL it goes to. Copy it from the dashboard or read it with
 `(await payitgo.webhooks.get()).secret`, and give it to the client once:
 
 ```ts
@@ -193,11 +196,11 @@ const payitgo = new Payitgo(apiKey, {
   baseUrl: "https://api.example.com", // or PAYITGO_BASE_URL
   timeoutMs: 30_000,
   maxRetries: 2,                      // network errors, 429 and 5xx
-  webhookSecret: "whsec_…",           // for webhooks.constructEvent
+  webhookSecret: process.env.PAYITGO_WEBHOOK_SECRET, // for webhooks.constructEvent
   webhookUrl: "https://…",            // default webhook_url of payments.create
 });
 
-payitgo.livemode;                                     // false for sk_test_ keys
+await payitgo.isLive();                               // false for a test key (asks payitgo once)
 await payitgo.payments.create({ order_id, amount_usd, token, description?, metadata?,
                               customer_email?, success_url?, cancel_url?, webhook_url?, simulate? });
 await payitgo.payments.create({ order_id, price_amount, price_currency, … }); // priced in another currency

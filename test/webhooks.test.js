@@ -3,10 +3,13 @@ const assert = require("node:assert");
 const crypto = require("node:crypto");
 const { Payitgo, PayitgoError, webhooks, SignatureVerificationError } = require("../dist");
 
+const KEY = "8334dfeae25b9b200b75995e6e55cf8c3602120c1920bfef7a4ff8900b620881";
+
 // Signed by the gateway's own signer.
-const SECRET = "whsec_test_secret";
-const HEADER = "t=1760000000,v1=6abd292fdf2ecc51779c161f5d4be2d47236f7a43fbaa9dd7093303904b91a7b";
-const BODY = '{"id":"evt_test_123","type":"payment.confirmed","livemode":false,"created_at":"2026-10-09T12:00:00Z","data":{"id":"pay_123","order_id":"ORD-1","status":"confirmed","usd_amount":"10"}}';
+const SECRET = "05bd6b428158318cc38756fa34aa60795af0fc5d9a316dcc9b060c8ca1863fc3";
+const HEADER = "t=1760000000,v1=75eb20fb34bccab4b9121285930b076e5e60ccad0a2542bd76eb56d89744faed";
+const BODY = '{"id":"b8e1f80bd70ae0784c7855a4","type":"payment.confirmed","livemode":false,"created_at":"2026-10-09T12:00:00Z","data":{"id":"040ffd5925d40e11c67b7238","order_id":"ORD-1","status":"confirmed","usd_amount":"10"}}';
+const OTHER_SECRET = "bd4106123e659e259c401119d0c7ef0a221df306a5a414b6fb6a579499962d26";
 
 const sign = (secret, t, body) =>
   `t=${t},v1=${crypto.createHmac("sha256", secret).update(`${t}.${body}`).digest("hex")}`;
@@ -19,7 +22,7 @@ test("accepts a delivery signed by the gateway", () => {
 });
 
 test("accepts a Buffer body", () => {
-  assert.equal(webhooks.constructEvent(Buffer.from(BODY), HEADER, SECRET, 0).id, "evt_test_123");
+  assert.equal(webhooks.constructEvent(Buffer.from(BODY), HEADER, SECRET, 0).id, "b8e1f80bd70ae0784c7855a4");
 });
 
 test("rejects a changed body", () => {
@@ -27,7 +30,7 @@ test("rejects a changed body", () => {
 });
 
 test("rejects the wrong secret", () => {
-  assert.throws(() => webhooks.constructEvent(BODY, HEADER, "whsec_other", 0), SignatureVerificationError);
+  assert.throws(() => webhooks.constructEvent(BODY, HEADER, OTHER_SECRET, 0), SignatureVerificationError);
 });
 
 test("rejects a missing header", () => {
@@ -37,15 +40,16 @@ test("rejects a missing header", () => {
 test("rejects an old timestamp, accepts a fresh one", () => {
   assert.throws(() => webhooks.constructEvent(BODY, HEADER, SECRET), SignatureVerificationError);
   const now = Math.floor(Date.now() / 1000);
-  assert.equal(webhooks.constructEvent(BODY, sign(SECRET, now, BODY), SECRET).id, "evt_test_123");
+  assert.equal(webhooks.constructEvent(BODY, sign(SECRET, now, BODY), SECRET).id, "b8e1f80bd70ae0784c7855a4");
 });
 
 test("client checks the key and the base URL", () => {
-  assert.throws(() => new Payitgo("pk_123", { baseUrl: "http://x" }), /sk_test_ or sk_live_/);
+  assert.throws(() => new Payitgo("", { baseUrl: "http://x" }), /API key is required/);
+  assert.throws(() => new Payitgo("  ", { baseUrl: "http://x" }), /API key is required/);
+  assert.throws(() => new Payitgo(undefined, { baseUrl: "http://x" }), /API key is required/);
   delete process.env.PAYITGO_BASE_URL;
-  assert.throws(() => new Payitgo("sk_test_abc", { baseUrl: "" }), /baseUrl/);
-  assert.equal(new Payitgo("sk_test_abc", { baseUrl: "http://x" }).livemode, false);
-  assert.equal(new Payitgo("sk_live_abc", { baseUrl: "http://x" }).livemode, true);
+  assert.throws(() => new Payitgo(KEY, { baseUrl: "" }), /baseUrl/);
+  assert.equal("livemode" in new Payitgo(KEY, { baseUrl: "http://x" }), false);
 });
 
 // ── The webhook (IPN), against a fake gateway on 127.0.0.1 ──────────────────
@@ -55,7 +59,7 @@ const http = require("node:http");
 const WEBHOOK = {
   livemode: false,
   url: "https://shop.example/payitgo/ipn",
-  secret: "whsec_" + "ab".repeat(32),
+  secret: "ab".repeat(32),
   created_at: "2026-10-10T09:00:00Z",
   updated_at: "2026-10-10T09:05:00Z",
 };
@@ -94,7 +98,7 @@ async function fakeGateway(t, options = {}) {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
-  const payitgo = new Payitgo("sk_test_abc", { baseUrl: `http://127.0.0.1:${server.address().port}/`, maxRetries: 0, ...options });
+  const payitgo = new Payitgo(KEY, { baseUrl: `http://127.0.0.1:${server.address().port}/`, maxRetries: 0, ...options });
   return { payitgo, requests, reply: (status, body) => replies.push([status, body]) };
 }
 
@@ -104,8 +108,38 @@ test("webhooks.get reads the mode's webhook", async (t) => {
   assert.deepEqual(await payitgo.webhooks.get(), WEBHOOK);
   assert.equal(requests[0].method, "GET");
   assert.equal(requests[0].url, "/v1/webhook");
-  assert.equal(requests[0].headers.authorization, "Bearer sk_test_abc");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
   assert.equal(requests[0].body, undefined);
+});
+
+test("isLive asks payitgo once: a live key", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(200, { webhook: { ...WEBHOOK, livemode: true } });
+  assert.equal(await payitgo.isLive(), true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, "GET");
+  assert.equal(requests[0].url, "/v1/webhook");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
+  // The second call does not ask again (no reply is queued: asking would fail).
+  assert.equal(await payitgo.isLive(), true);
+  assert.equal(requests.length, 1);
+});
+
+test("isLive asks payitgo once: a test key", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(200, { webhook: WEBHOOK });
+  assert.equal(await payitgo.isLive(), false);
+  assert.equal(await payitgo.isLive(), false);
+  assert.equal(requests.length, 1);
+});
+
+test("isLive: a key payitgo refuses is a PayitgoError, and is asked again next time", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(401, { error: "invalid API key" });
+  await assert.rejects(payitgo.isLive(), (e) => e instanceof PayitgoError && e.status === 401 && e.message === "invalid API key");
+  reply(200, { webhook: WEBHOOK });
+  assert.equal(await payitgo.isLive(), false);
+  assert.equal(requests.length, 2);
 });
 
 test("webhooks.set puts the URL", async (t) => {
@@ -136,7 +170,7 @@ test("webhooks.test queues a ping and returns its delivery", async (t) => {
   const delivery = await payitgo.webhooks.test();
   assert.equal(requests[0].method, "POST");
   assert.equal(requests[0].url, "/v1/webhook/test");
-  assert.equal(requests[0].headers.authorization, "Bearer sk_test_abc");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
   assert.equal(delivery.event_type, "ping");
   assert.equal(delivery.target, "account");
   assert.equal(delivery.status, "pending");
@@ -210,7 +244,7 @@ test("payments.selectToken posts the coin with the key and returns the whole pay
   const payment = await payitgo.payments.selectToken("pay_1", "XRP");
   assert.equal(requests[0].method, "POST");
   assert.equal(requests[0].url, "/v1/payments/pay_1/token");
-  assert.equal(requests[0].headers.authorization, "Bearer sk_test_abc");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
   assert.equal(requests[0].headers["content-type"], "application/json");
   assert.deepEqual(requests[0].body, { token: "XRP" });
   assert.deepEqual(payment, CHOSEN);
@@ -254,7 +288,7 @@ const SIMULATED = {
   rate_locked: "1",
   deposits: [
     {
-      tx_id: "sim_pay_2_1791817211348_0", token: "USDT_TRC20", chain: "tron", amount: "20", usd_value: "20",
+      tx_id: "8de0120d502929788a71a7b7cf60e5ef3c095cdbb05cd8a7ddabc0bc9ffa9582", token: "USDT_TRC20", chain: "tron", amount: "20", usd_value: "20",
       counted: true, status: "pending", seen_at: "2026-10-10T12:00:05Z", simulated: true,
     },
   ],
@@ -270,7 +304,7 @@ test("payments.simulate posts the outcome with the key and returns the payment w
   const payment = await payitgo.payments.simulate("pay_2", "confirmed");
   assert.equal(requests[0].method, "POST");
   assert.equal(requests[0].url, "/v1/payments/pay_2/simulate");
-  assert.equal(requests[0].headers.authorization, "Bearer sk_test_abc");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
   assert.equal(requests[0].headers["content-type"], "application/json");
   assert.deepEqual(requests[0].body, { outcome: "confirmed" });
   assert.deepEqual(payment, SIMULATED);
@@ -352,24 +386,24 @@ test("tokens.list: every token, or a payment of an amount's options", async (t) 
 });
 
 test("client webhooks.constructEvent uses the client's secret, or the one passed", () => {
-  const withSecret = new Payitgo("sk_test_abc", { baseUrl: "http://x", webhookSecret: SECRET });
-  assert.equal(withSecret.webhooks.constructEvent(BODY, HEADER, undefined, 0).id, "evt_test_123");
+  const withSecret = new Payitgo(KEY, { baseUrl: "http://x", webhookSecret: SECRET });
+  assert.equal(withSecret.webhooks.constructEvent(BODY, HEADER, undefined, 0).id, "b8e1f80bd70ae0784c7855a4");
   const now = Math.floor(Date.now() / 1000);
-  assert.equal(withSecret.webhooks.constructEvent(BODY, sign(SECRET, now, BODY)).id, "evt_test_123");
+  assert.equal(withSecret.webhooks.constructEvent(BODY, sign(SECRET, now, BODY)).id, "b8e1f80bd70ae0784c7855a4");
   // An explicit secret wins over the client's.
-  const other = new Payitgo("sk_test_abc", { baseUrl: "http://x", webhookSecret: "whsec_other" });
+  const other = new Payitgo(KEY, { baseUrl: "http://x", webhookSecret: OTHER_SECRET });
   assert.throws(() => other.webhooks.constructEvent(BODY, HEADER, undefined, 0), SignatureVerificationError);
-  assert.equal(other.webhooks.constructEvent(BODY, HEADER, SECRET, 0).id, "evt_test_123");
+  assert.equal(other.webhooks.constructEvent(BODY, HEADER, SECRET, 0).id, "b8e1f80bd70ae0784c7855a4");
   // Without any secret there is nothing to verify with.
-  const none = new Payitgo("sk_test_abc", { baseUrl: "http://x" });
+  const none = new Payitgo(KEY, { baseUrl: "http://x" });
   assert.throws(() => none.webhooks.constructEvent(BODY, HEADER), (e) => e instanceof SignatureVerificationError && /no webhook secret/.test(e.message));
-  assert.equal(Payitgo.webhooks.constructEvent(BODY, HEADER, SECRET, 0).id, "evt_test_123");
+  assert.equal(Payitgo.webhooks.constructEvent(BODY, HEADER, SECRET, 0).id, "b8e1f80bd70ae0784c7855a4");
 });
 
 test("rejects a signed but non-numeric timestamp unless the timestamp check is off", () => {
   const header = sign(SECRET, "soon", BODY);
   assert.throws(() => webhooks.constructEvent(BODY, header, SECRET), (e) => e instanceof SignatureVerificationError && /malformed timestamp/.test(e.message));
-  assert.equal(webhooks.constructEvent(BODY, header, SECRET, 0).id, "evt_test_123");
+  assert.equal(webhooks.constructEvent(BODY, header, SECRET, 0).id, "b8e1f80bd70ae0784c7855a4");
 });
 
 test("a signature of non-ASCII characters is a signature error", () => {
@@ -421,14 +455,14 @@ async function stallingGateway(t) {
 
 test("a timeout while reading the answer is retried like a network error", async (t) => {
   const gw = await stallingGateway(t);
-  const payitgo = new Payitgo("sk_test_abc", { baseUrl: gw.url, timeoutMs: 300, maxRetries: 1 });
+  const payitgo = new Payitgo(KEY, { baseUrl: gw.url, timeoutMs: 300, maxRetries: 1 });
   assert.deepEqual(await payitgo.webhooks.get(), WEBHOOK);
   assert.equal(gw.calls(), 2);
 });
 
 test("a timeout while reading the answer, with no retries left, is a PayitgoError with status 0", async (t) => {
   const gw = await stallingGateway(t);
-  const payitgo = new Payitgo("sk_test_abc", { baseUrl: gw.url, timeoutMs: 300, maxRetries: 0 });
+  const payitgo = new Payitgo(KEY, { baseUrl: gw.url, timeoutMs: 300, maxRetries: 0 });
   await assert.rejects(payitgo.webhooks.get(), (e) => e instanceof PayitgoError && e.status === 0 && /request failed/.test(e.message));
   assert.equal(gw.calls(), 1);
 });

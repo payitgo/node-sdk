@@ -62,7 +62,7 @@ export interface Deposit {
   failed_at?: string;
   /** Why it failed: "transaction not found on chain" or "confirmation timeout". */
   fail_reason?: string;
-  /** Played by a test payment's simulation: its tx_id starts with "sim_" and is on no chain. */
+  /** Played by a test payment's simulation: its tx_id names no transaction on any chain. */
   simulated?: boolean;
 }
 
@@ -221,7 +221,7 @@ export interface Webhook {
   livemode: boolean;
   /** null when not set: events then go only to the payments created with their own webhook_url. */
   url: string | null;
-  /** "whsec_…": signs every notification of the mode. Pass it to the client as `webhookSecret`. */
+  /** Signs every notification of the mode. Pass it to the client as `webhookSecret`. */
   secret: string;
   created_at: string;
   updated_at: string;
@@ -275,7 +275,7 @@ export interface PayitgoOptions {
   timeoutMs?: number;
   /** Retries after a network error, a 429 or a 5xx. Default 2. */
   maxRetries?: number;
-  /** The signing secret of the key's mode ("whsec_…"): `webhooks.constructEvent` uses it when given none. */
+  /** The signing secret of the key's mode: `webhooks.constructEvent` uses it when given none. */
   webhookSecret?: string;
   /** Sent as `webhook_url` with every `payments.create` that does not pass its own. */
   webhookUrl?: string;
@@ -351,8 +351,6 @@ export const webhooks = {
  *   const payment = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, token: "USDT_TRC20" });
  */
 export class Payitgo {
-  /** false for a test key (sk_test_…), true for a live key (sk_live_…). */
-  readonly livemode: boolean;
   readonly payments: Payments;
   readonly tokens: Tokens;
   readonly checkout: Checkout;
@@ -369,17 +367,18 @@ export class Payitgo {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
+  /** The key's mode, once payitgo has said it (isLive). */
+  private live?: boolean;
 
   constructor(apiKey: string, options: PayitgoOptions = {}) {
-    if (!/^sk_(test|live)_/.test(apiKey ?? "")) {
-      throw new Error("payitgo: the API key must start with sk_test_ or sk_live_");
+    if (typeof apiKey !== "string" || !apiKey.trim()) {
+      throw new Error("payitgo: the API key is required");
     }
     const baseUrl = options.baseUrl ?? process.env.PAYITGO_BASE_URL ?? DEFAULT_BASE_URL;
     if (!baseUrl) {
       throw new Error("payitgo: set baseUrl (or PAYITGO_BASE_URL) to your gateway's address");
     }
     this.apiKey = apiKey;
-    this.livemode = apiKey.startsWith("sk_live_");
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
@@ -389,6 +388,17 @@ export class Payitgo {
     this.tokens = new Tokens(this);
     this.checkout = new Checkout(this);
     this.webhooks = new Webhooks(this);
+  }
+
+  /**
+   * Whether the key is a live key (its payments are real) rather than a test key.
+   * payitgo says which (`GET /v1/webhook`'s `livemode`) the first time; the answer
+   * is kept for the client's life. Rejects with a PayitgoError when payitgo refuses
+   * the key or cannot be reached.
+   */
+  async isLive(): Promise<boolean> {
+    if (this.live === undefined) this.live = (await this.webhooks.get()).livemode;
+    return this.live;
   }
 
   /** @internal */

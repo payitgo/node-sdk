@@ -8,9 +8,9 @@ import Payitgo, { Payitgo as NamedPayitgo, PayitgoError, SignatureVerificationEr
 test("ES modules: the default export is the Payitgo class", () => {
   assert.equal(typeof Payitgo, "function");
   assert.equal(Payitgo, NamedPayitgo);
-  const payitgo = new Payitgo("sk_live_abc", { baseUrl: "http://x" });
+  const payitgo = new Payitgo("4f9c2a7e1b8d3f6a0c5e9b2d7a4f1c8e3b6d9a2f5c8e1b4d7a0f3c6e9b2d5a8f", { baseUrl: "http://x" });
   assert.ok(payitgo instanceof NamedPayitgo);
-  assert.equal(payitgo.livemode, true);
+  assert.equal(typeof payitgo.isLive, "function");
   assert.equal(Payitgo.webhooks, webhooks);
   assert.equal(typeof VERSION, "string");
 });
