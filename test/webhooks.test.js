@@ -256,11 +256,11 @@ test("payments.selectToken posts the coin with the key and returns the whole pay
 
 test("payments.selectToken: a coin already chosen is a 409", async (t) => {
   const { payitgo, reply } = await fakeGateway(t);
-  reply(409, { error: "the coin for this payment has already been chosen" });
+  reply(409, { error: "the coin for this payment can no longer be changed" });
   await assert.rejects(payitgo.payments.selectToken("pay_1", "XRP"), (e) => {
     assert.ok(e instanceof PayitgoError);
     assert.equal(e.status, 409);
-    assert.equal(e.message, "the coin for this payment has already been chosen");
+    assert.equal(e.message, "the coin for this payment can no longer be changed");
     return true;
   });
 });

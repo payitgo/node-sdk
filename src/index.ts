@@ -35,6 +35,16 @@ export interface Simulation {
 }
 
 /** One transfer to a payment's address. */
+/** A coin chosen for a payment before its current one, when the customer changed it. Its address is still watched. */
+export interface PreviousCoin {
+  token: string;
+  chain: string;
+  deposit_address: string;
+  destination_tag?: number;
+  crypto_amount: string;
+  rate_locked: string;
+}
+
 export interface Deposit {
   tx_id: string;
   /** The asset that arrived: another than the payment's own for a wrong-asset deposit. */
@@ -54,6 +64,8 @@ export interface Deposit {
   confirmed_at?: string;
   /** The sender's address, when the network reports it (Bitcoin-like coins: the first input's): where a refund would go. */
   from?: string;
+  /** The address it was sent to: the payment's deposit_address, or a previous coin's. */
+  to?: string;
   /** The block (on XRP, the ledger) that holds it. */
   block?: number;
   /** That block's time. */
@@ -79,8 +91,10 @@ export interface Payment {
   /** Empty until the customer chooses the coin (see token_options). */
   token: string;
   chain: string;
-  /** While token is empty: the coins the customer may choose from. */
+  /** While token is empty, or while the coin can still change: the coins the customer may choose from. */
   token_options?: TokenInfo[];
+  /** The coins chosen before token, when the customer changed it. */
+  previous_coins?: PreviousCoin[];
   deposit_address: string;
   destination_tag?: number;
   crypto_amount: string;
@@ -463,7 +477,8 @@ class Payments {
    * Sets the coin of a payment created without one, when the customer chose it on your
    * own page: one of its `token_options`. `id` is the payment's id or your order id.
    * Returns the whole payment, now with its address, amount, locked rate and a deadline
-   * 15 minutes away. The coin is chosen once: choosing again is a 409.
+   * 15 minutes away. Another coin changes it while the payment still has `token_options`;
+   * once it can no longer change, a 409.
    */
   selectToken(id: string, token: string): Promise<Payment> {
     return this.client.request("POST", `/v1/payments/${encodeURIComponent(id)}/token`, { token });
@@ -509,7 +524,7 @@ class Checkout {
     return this.client.request("GET", `/checkout/${encodeURIComponent(checkoutToken)}`, undefined, false);
   }
 
-  /** The customer's choice of coin for a payment created without one. Public. */
+  /** The customer's choice of coin for a payment created without one, or a change of it. Public. */
   selectToken(checkoutToken: string, token: string): Promise<Payment> {
     return this.client.request("POST", `/checkout/${encodeURIComponent(checkoutToken)}/token`, { token }, false);
   }
