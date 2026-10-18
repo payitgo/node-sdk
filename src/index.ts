@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 /** Where the gateway lives when neither `baseUrl` nor PAYITGO_BASE_URL is set. */
 const DEFAULT_BASE_URL = "https://api.payitgo.co";
