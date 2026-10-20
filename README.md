@@ -1,6 +1,6 @@
 # payitgo for Node.js
 
-Accept crypto payments with [payitgo](https://api.payitgo.co/docs) from Node.js 18+. TypeScript types
+Accept crypto payments, and pay your own clients, with [payitgo](https://api.payitgo.co/docs) from Node.js 18+. TypeScript types
 included, no runtime dependencies.
 
 Full reference, with every method, option, type and error: [api.payitgo.co/docs/sdk-node](https://api.payitgo.co/docs/sdk-node).
@@ -148,7 +148,8 @@ const shop = new Payitgo(process.env.PAYITGO_KEY!, { webhookUrl: "https://shop.e
 ```
 
 A storefront's key cannot set the account's URL (`403`): pass `webhook_url` instead.
-Payout events always go to the webhook's URL.
+Events of your own payouts always go to the webhook's URL; a [payout batch](#payouts) made
+with its own `webhook_url` sends its events there.
 
 **The signing secret.** Every notification of a mode is signed with that mode's secret,
 whichever URL it goes to. Copy it from the dashboard or read it with
@@ -190,6 +191,177 @@ app.post("/payitgo/ipn", express.raw({ type: "application/json" }), async (req, 
 **Testing it.** `await payitgo.webhooks.test()` queues a signed `ping` event to the
 webhook's URL and returns its delivery (`400` when no URL is set).
 
+## Payouts
+
+Pay your own clients (withdrawals from your platform, prizes, payroll) from your **payout
+wallet**: one address per network (Tron, BNB Smart Chain, Ethereum, Bitcoin, Litecoin,
+Dogecoin, XRP Ledger), yours alone, that you top up. Payouts are paid in `USDT_TRC20`, `TRX`,
+`USDT_BEP20`, `USDC_BEP20`, `ETH_BEP20`, `BNB`, `USDT_ERC20`, `USDC_ERC20`, `DAI_ERC20`, `ETH`,
+`BTC`, `LTC`, `DOGE` and `XRP` (with `tag` for XRP's destination tag), or in another coin,
+converted on its way (below) ([Mass payouts](https://api.payitgo.co/docs/payouts)).
+
+Reading works with any key; everything else needs a key with **payouts** turned on in the
+dashboard (`403` otherwise). The key's mode decides the wallet: a test key pays from a test
+wallet, on paper. Amounts are decimal strings; amounts you send may be strings or numbers.
+
+**Payout requests, one by one.** Send each of your clients' payout requests as it comes in.
+payitgo checks and prices it at once and keeps it in your open list with its costs, until
+you send the list (or it goes by itself, with auto-send turned on in the dashboard):
+
+```ts
+// A client asks to withdraw. Pass your own id for the request as reference: sending it
+// again (a retry, yours or the client's) returns the same payment instead of a second one.
+const item = await payitgo.payouts.request({
+  reference: "wd-1042",
+  asset: "USDT_TRC20",
+  address: "TR7mNkucnhLZoJQLLJ6DR88jpLQufWxUJi",
+  amount: "120",
+  name: "Ana Silva",             // optional, with email and note
+});
+if (item.status === "invalid") console.log(item.errors.map((e) => e.message)); // kept, never sent
+else console.log(item.fee, item.send_amount, item.debit); // its costs, in the coin
+
+// The open list, and what sending it needs of each coin against what the wallet can spend.
+const { inbox, coverage, items } = await payitgo.payouts.inbox(); // inbox.totals, inbox.counts
+for (const c of coverage) {
+  if (Number(c.top_up) > 0) console.log(`send ${c.top_up} ${c.asset} to ${c.address} first`);
+}
+
+// Send every valid request, or some (payouts.send([id, …])): they become a batch, priced
+// again and submitted. It then waits for approval and/or funds, or starts.
+const batch = await payitgo.payouts.send();
+
+await payitgo.payouts.cancel(item.id);                // out of the list (or canceled, if not on its way yet)
+await payitgo.payouts.retrieveByReference("wd-1042"); // or payouts.retrieve(item.id)
+```
+
+`payouts.quote` prices up to 100 payments without keeping anything, for example to show a
+client the fee before they confirm:
+
+```ts
+const { quote, items } = await payitgo.payouts.quote({
+  fee_paid_by: "recipient",      // the fees come out of the amount ("merchant": on top)
+  items: [{ asset: "USDT_BEP20", address: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", amount: "120" }],
+});
+// items[0].send_amount: what the client receives; quote.total_usd: what it takes from the wallet
+```
+
+**Batches.** A whole list at once (payroll, prizes): up to 1000 payments a call, 10,000 a
+batch.
+
+```ts
+const batch = await payitgo.payoutBatches.create({
+  reference: "payroll-2026-10",  // safe to retry: a reference used already returns that batch
+  name: "October payroll",
+  items: [
+    { reference: "payroll-2026-10-ana", asset: "USDT_TRC20", address: "TR7mNkucnhLZoJQLLJ6DR88jpLQufWxUJi", amount: "1500" },
+    { reference: "payroll-2026-10-ben", asset: "USDT_BEP20", address: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", amount: "250" },
+  ],
+});
+// "quoted": batch.totals (per coin) and batch.total_usd. Invalid rows are left out:
+const invalid = await payitgo.payoutBatches.items(batch.id, { status: "invalid" }); // their errors say why
+
+const submitted = await payitgo.payoutBatches.submit(batch.id);
+// "pending_approval" (your payout settings ask for approvals, given in the dashboard),
+// "awaiting_funds" (submitted.waiting.shortfall: what to send where), or "processing".
+```
+
+A batch's prices hold for an hour (15 minutes with converted payments): past it, `submit` is
+a `409` (`its prices expired: get a new quote first`): call `payoutBatches.quote(batch.id)`,
+then submit. Also `payoutBatches.addItems(id, items)`, `list({ status })`, `retrieve(id)` and
+`cancel(id)`.
+
+**Claim links.** A payment whose recipient chooses where to receive it: pass `claim: true`
+(or `claim_assets`, the other coins they may choose, paid at the same dollar value) and no
+`address`. With an `email`, payitgo emails them the link and they confirm with a code sent
+there; without one, you share the link (`claim.url`) yourself. An email alone is not a claim
+link: a payment with no address and no `claim` is invalid. It works in payout requests,
+batches and quotes alike.
+
+```ts
+const item = await payitgo.payouts.request({
+  reference: "prize-cup-1",
+  asset: "USDT_TRC20",
+  amount: "120",
+  claim: true,
+  email: "player@example.com",          // optional: emailed the link (else send item.claim.url yourself)
+  claim_assets: ["USDT_BEP20", "BTC"],  // optional: other coins they may choose
+});
+```
+
+Once funded, the payment is `claimable` until its recipient claims it (`payout_item.claimed`:
+it is then `queued`, with the address and the coin they chose; `claim.funded_asset` and
+`claim.funded_amount` say what it was funded with when they chose another) or until
+`claim.expires_at` (`payout_item.claim_expired`: it is `expired`, its money free again in the
+wallet, its reference in `released_reference`). Read `item.claim`: `url`, `email`, `assets`,
+`expires_at`, `claimed_at`, `emailed`, `extended`. Resending and extending a link are done in
+the dashboard. A bad email is an `invalid_email` error.
+
+**Converted payments.** Pay a recipient in a coin your wallet does not hold: with
+`convert: "convert"`, every payment in another coin than `convert_from` is paid from
+`convert_from`, converted on its way. Both default to your payout settings.
+
+```ts
+const batch = await payitgo.payoutBatches.create({
+  reference: "wd-batch-7",
+  convert: "convert",
+  convert_from: "USDT_TRC20",           // the wallet's coin that pays
+  items: [{ reference: "wd-2001", asset: "BTC", address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", amount: "0.002" }],
+});
+const { items } = await payitgo.payoutBatches.items(batch.id);
+// items[0].convert: { to: "BTC", ticker, network, to_amount: "0.002", estimate: "0.00200041" }
+// items[0].asset, amount, fee and debit are in USDT_TRC20; conversion_fee is part of fee.
+```
+
+`convert.estimate` is about what arrives; `convert.amount_out` is what did, once sent. A coin
+that cannot be converted right now is a `conversion_unavailable` error. `payouts.quote`
+takes `convert` and `convert_from` too; payout requests follow your payout settings. Claim
+links are never converted.
+
+**The wallet.**
+
+```ts
+const wallets = await payitgo.payoutWallets.list();
+// [{ chain: "tron", network, address, assets: [{ asset, balance, reserved, spendable, needed }] }, { chain: "bsc", … }, …]
+```
+
+Send each network's address only its payout coins. `needed` is what batches waiting for
+funds lack: they start by themselves once it arrives.
+
+**Test mode.** With a test key, top the test wallet up on paper. Payments are then sent on
+paper within seconds, with a made-up `tx_id`, and their webhooks arrive as live ones do:
+
+```ts
+await payitgo.payoutWallets.simulateTopUp("USDT_TRC20", "1000"); // test keys only: 400 with a live key
+```
+
+**Webhooks.** Each step raises an event, signed like the others: `payout_batch.quoted`,
+`payout_batch.pending_approval`, `payout_batch.approved`, `payout_batch.rejected`,
+`payout_batch.awaiting_funds`, `payout_batch.processing`, `payout_batch.completed` and
+`payout_batch.canceled` carry the batch; `payout_item.sent`, `payout_item.failed`,
+`payout_item.canceled`, `payout_item.claimed` and `payout_item.claim_expired` the payment;
+`payout_wallet.withdrawn` the withdrawal. Schedules (made in the dashboard) send
+`payout_schedule.run` (a summary of the schedule, without its rows: `last_batch_id` is the
+batch it made, `last_error` why it made none) and `payout_schedule.funding_needed`
+(`{ schedule, shortfall }`, a few days before a run the wallet cannot cover); their batches
+have `source: "schedule"`. A payment
+never sent (failed, canceled or expired) gives its reference back: it is then in
+`released_reference`, so the same request can be paid again.
+
+```ts
+import type { PayoutItem } from "@payitgo/node";
+
+const event = payitgo.webhooks.constructEvent<PayoutItem>(req.body, req.get("X-Webhook-Signature"));
+switch (event.type) {
+  case "payout_item.sent":   // on chain
+    await markWithdrawalPaid(event.data.reference, event.data.tx_id);
+    break;
+  case "payout_item.failed": // given up: its money stays in the wallet
+    await reopenWithdrawal(event.data.released_reference, event.data.fail_reason);
+    break;
+}
+```
+
 ## API
 
 ```ts
@@ -212,6 +384,23 @@ await payitgo.payments.list({ status: "confirmed", store_id: storeId, limit: 50,
 await payitgo.tokens.list();                          // [{ token, chain, min_usd, network_fee_usd, fee_note }]
 await payitgo.tokens.list({ amount_usd: "49.90" });   // the coins a $49.90 payment offers, with amount_due_usd
 await payitgo.checkout.retrieve(checkoutToken);       // public payer view
+await payitgo.payouts.request({ reference, asset, address, amount, tag?, name?, email?, note?, claim?, claim_assets? }); // PayoutItem
+await payitgo.payouts.retrieve(itemId);               // PayoutItem: a request or a batch's row
+await payitgo.payouts.retrieveByReference(reference); // PayoutItem
+await payitgo.payouts.inbox({ status?, limit?, offset? }); // PayoutInbox { inbox, coverage, items, total, limit, offset }
+await payitgo.payouts.send(ids?);                     // PayoutBatch: every valid request, or those of ids
+await payitgo.payouts.cancel(itemId);                 // PayoutItem, status "canceled"
+await payitgo.payouts.quote({ fee_paid_by?, convert?, convert_from?, items }); // { quote, items }: nothing kept
+await payitgo.payoutBatches.create({ reference?, name?, fee_paid_by?, convert?, convert_from?, webhook_url?, items }); // PayoutBatch
+await payitgo.payoutBatches.list({ status?, limit?, offset? }); // { batches, total, limit, offset }
+await payitgo.payoutBatches.retrieve(batchId);        // PayoutBatch
+await payitgo.payoutBatches.items(batchId, { status?, limit?, offset? }); // { items, total, limit, offset }
+await payitgo.payoutBatches.addItems(batchId, items); // PayoutBatch
+await payitgo.payoutBatches.quote(batchId);           // PayoutBatch, priced again
+await payitgo.payoutBatches.submit(batchId);          // PayoutBatch
+await payitgo.payoutBatches.cancel(batchId);          // PayoutBatch
+await payitgo.payoutWallets.list();                   // PayoutWallet[]
+await payitgo.payoutWallets.simulateTopUp(asset, amount); // PayoutWallet[]: test keys only
 await payitgo.webhooks.get();                         // Webhook { livemode, url, secret, created_at, updated_at }
 await payitgo.webhooks.set(url);                      // Webhook
 await payitgo.webhooks.remove();                      // Webhook, url null (the secret stays)
