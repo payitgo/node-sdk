@@ -354,7 +354,8 @@ export interface PayoutIssue {
 /**
  * A claim link: a payment its recipient claims, choosing the coin (its own, or one of
  * `assets`, at the same dollar value) and the address. Emailed to `email` when there is
- * one (the recipient confirms with a code sent there); otherwise you share `url`.
+ * one (the recipient confirms with a code sent there); otherwise you share `url`, and give
+ * `pin` another way (a call, a text message): the link alone pays no one.
  */
 export interface PayoutClaim {
   email?: string;
@@ -370,6 +371,10 @@ export interface PayoutClaim {
   extended: number;
   /** The link to give the recipient. Absent in a quote. */
   url?: string;
+  /** A link without an email: the 6 digits its recipient enters to claim it. Give it apart from the link. */
+  pin?: string;
+  /** 5 wrong PINs were entered: a new PIN from the dashboard unlocks it. */
+  pin_locked?: boolean;
   /** When the recipient chose another coin: what the payment was funded with. */
   funded_asset?: string;
   funded_amount?: string;
