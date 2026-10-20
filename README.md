@@ -148,8 +148,9 @@ const shop = new Payitgo(process.env.PAYITGO_KEY!, { webhookUrl: "https://shop.e
 ```
 
 A storefront's key cannot set the account's URL (`403`): pass `webhook_url` instead.
-Events of your own payouts always go to the webhook's URL; a [payout batch](#payouts) made
-with its own `webhook_url` sends its events there.
+Events of your own [payouts](#payouts) go to a payment's own `webhook_url` when it has one,
+else to its batch's `webhook_url`, else to the webhook's URL (withdrawals and schedules
+always go there).
 
 **The signing secret.** Every notification of a mode is signed with that mode's secret,
 whichever URL it goes to. Copy it from the dashboard or read it with
@@ -231,9 +232,14 @@ for (const c of coverage) {
 // again and submitted. It then waits for approval and/or funds, or starts.
 const batch = await payitgo.payouts.send();
 
-await payitgo.payouts.cancel(item.id);                // out of the list (or canceled, if not on its way yet)
+// Out of the list (or canceled, if not on its way yet); safe to retry. Several at once:
+// payouts.remove([id, …]), a result per id.
+await payitgo.payouts.cancel(item.id);
 await payitgo.payouts.retrieveByReference("wd-1042"); // or payouts.retrieve(item.id)
 ```
+
+A request's own `webhook_url` (https) gets its events instead of the webhook's URL, and it
+keeps it when it is sent into a batch.
 
 `payouts.quote` prices up to 100 payments without keeping anything, for example to show a
 client the fee before they confirm:
@@ -338,15 +344,24 @@ await payitgo.payoutWallets.simulateTopUp("USDT_TRC20", "1000"); // test keys on
 **Webhooks.** Each step raises an event, signed like the others: `payout_batch.quoted`,
 `payout_batch.pending_approval`, `payout_batch.approved`, `payout_batch.rejected`,
 `payout_batch.awaiting_funds`, `payout_batch.processing`, `payout_batch.completed` and
-`payout_batch.canceled` carry the batch; `payout_item.sent`, `payout_item.failed`,
-`payout_item.canceled`, `payout_item.claimed` and `payout_item.claim_expired` the payment;
-`payout_wallet.withdrawn` the withdrawal. Schedules (made in the dashboard) send
+`payout_batch.canceled` carry the batch; `payout_item.processing` (a request left your list
+for a batch), `payout_item.returned` (it came back: not final), `payout_item.sent`,
+`payout_item.failed`, `payout_item.canceled` (`cancel_reason` and `canceled_by` say why and
+who), `payout_item.claimed` and `payout_item.claim_expired` the payment;
+`payout_wallet.withdrawn` and `payout_wallet.withdrawal_failed` (`fail_reason`) the
+withdrawal. Schedules (made in the dashboard) send
 `payout_schedule.run` (a summary of the schedule, without its rows: `last_batch_id` is the
 batch it made, `last_error` why it made none) and `payout_schedule.funding_needed`
 (`{ schedule, shortfall }`, a few days before a run the wallet cannot cover); their batches
 have `source: "schedule"`. A payment
 never sent (failed, canceled or expired) gives its reference back: it is then in
 `released_reference`, so the same request can be paid again.
+
+**Staying in sync.** Every payment ends `sent`, `failed`, `canceled` or `expired`, with one
+event each, delivered at least once: deduplicate on the event's `id` (it never changes),
+and act on `data.status` and the latest `data.updated_at`, since order is not guaranteed.
+Replay what you missed with `events.list({ after })` (the last event id you handled), and
+resync the payments with `payouts.list({ cursor })` (keep its `next_cursor`).
 
 ```ts
 import type { PayoutItem } from "@payitgo/node";
@@ -384,12 +399,14 @@ await payitgo.payments.list({ status: "confirmed", store_id: storeId, limit: 50,
 await payitgo.tokens.list();                          // [{ token, chain, min_usd, network_fee_usd, fee_note }]
 await payitgo.tokens.list({ amount_usd: "49.90" });   // the coins a $49.90 payment offers, with amount_due_usd
 await payitgo.checkout.retrieve(checkoutToken);       // public payer view
-await payitgo.payouts.request({ reference, asset, address, amount, tag?, name?, email?, note?, claim?, claim_assets? }); // PayoutItem
+await payitgo.payouts.request({ reference, asset, address, amount, tag?, name?, email?, note?, claim?, claim_assets?, webhook_url? }); // PayoutItem
 await payitgo.payouts.retrieve(itemId);               // PayoutItem: a request or a batch's row
-await payitgo.payouts.retrieveByReference(reference); // PayoutItem
+await payitgo.payouts.retrieveByReference(reference); // PayoutItem: the one carrying it, or the latest that gave it back
+await payitgo.payouts.list({ status?, updated_since?, cursor?, limit? }); // { items, has_more, next_cursor }: oldest change first
 await payitgo.payouts.inbox({ status?, limit?, offset? }); // PayoutInbox { inbox, coverage, items, total, limit, offset }
 await payitgo.payouts.send(ids?);                     // PayoutBatch: every valid request, or those of ids
 await payitgo.payouts.cancel(itemId);                 // PayoutItem, status "canceled"
+await payitgo.payouts.remove(itemIds);                // [{ id, item } | { id, error: { status, message } }]
 await payitgo.payouts.quote({ fee_paid_by?, convert?, convert_from?, items }); // { quote, items }: nothing kept
 await payitgo.payoutBatches.create({ reference?, name?, fee_paid_by?, convert?, convert_from?, webhook_url?, items }); // PayoutBatch
 await payitgo.payoutBatches.list({ status?, limit?, offset? }); // { batches, total, limit, offset }
@@ -405,6 +422,7 @@ await payitgo.webhooks.get();                         // Webhook { livemode, url
 await payitgo.webhooks.set(url);                      // Webhook
 await payitgo.webhooks.remove();                      // Webhook, url null (the secret stays)
 await payitgo.webhooks.test();                        // WebhookDelivery of a "ping" event
+await payitgo.events.list({ type?, after?, created_after?, limit? }); // { events, has_more }: oldest first, to replay
 payitgo.webhooks.constructEvent(rawBody, signatureHeader, secret?, toleranceSeconds = 300);
 Payitgo.webhooks.constructEvent(rawBody, signatureHeader, secret, toleranceSeconds = 300); // no client needed
 ```

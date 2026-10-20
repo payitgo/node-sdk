@@ -190,6 +190,69 @@ test("webhooks errors carry the API's message and status", async (t) => {
   await assert.rejects(payitgo.webhooks.set(WEBHOOK.url), (e) => e instanceof PayitgoError && e.status === 403 && e.message === forbidden);
 });
 
+// ── Events, replayed ────────────────────────────────────────────────────────
+
+const EVENTS = {
+  events: [
+    {
+      id: "2b4d6f8a0c1e3a5c7e9b1d3f",
+      type: "payment.confirmed",
+      livemode: false,
+      created_at: "2026-10-20T09:31:12.614Z",
+      data: { id: "040ffd5925d40e11c67b7238", order_id: "ORD-1", status: "confirmed", usd_amount: "10" },
+    },
+    {
+      id: "9b1e3c5a7d2f4b6e8a0c1d3f",
+      type: "payout_item.canceled",
+      livemode: false,
+      created_at: "2026-10-20T15:02:44.312Z",
+      data: { id: "5c7e9a1b3d5f7a9c1e3b5d7f", status: "canceled", cancel_reason: "rejected", cancel_note: "paid by bank transfer instead", released_reference: "wd-88231" },
+    },
+  ],
+  has_more: true,
+};
+
+test("events.list reads the mode's events, oldest first", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(200, EVENTS);
+  const page = await payitgo.events.list();
+  assert.equal(requests[0].method, "GET");
+  assert.equal(requests[0].url, "/v1/events");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
+  assert.equal(requests[0].body, undefined);
+  assert.deepEqual(page, EVENTS);
+  assert.equal(page.has_more, true);
+  assert.equal(page.events[1].type, "payout_item.canceled");
+  assert.equal(page.events[1].data.cancel_reason, "rejected");
+});
+
+test("events.list sends its filters: types and families comma-separated, a Date as its ISO string", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  reply(200, EVENTS);
+  await payitgo.events.list({ type: ["payout_item.*", "payment.confirmed"], after: "2b4d6f8a0c1e3a5c7e9b1d3f", limit: 200 });
+  assert.equal(requests[0].url, "/v1/events?type=payout_item.*%2Cpayment.confirmed&after=2b4d6f8a0c1e3a5c7e9b1d3f&limit=200");
+  reply(200, { events: [], has_more: false });
+  const empty = await payitgo.events.list({ type: "payout_item.sent", created_after: new Date(Date.UTC(2026, 9, 20, 9, 0, 0)) });
+  assert.equal(requests[1].url, "/v1/events?type=payout_item.sent&created_after=2026-10-20T09%3A00%3A00.000Z");
+  assert.deepEqual(empty, { events: [], has_more: false });
+  reply(200, EVENTS);
+  await payitgo.events.list({ created_after: "2026-10-20T09:00:00Z" });
+  assert.equal(requests[2].url, "/v1/events?created_after=2026-10-20T09%3A00%3A00Z");
+  // Unset filters are left out.
+  reply(200, EVENTS);
+  await payitgo.events.list({ type: [], after: "", created_after: undefined, limit: null });
+  assert.equal(requests[3].url, "/v1/events");
+});
+
+test("events.list: a storefront's key is a 403, an unknown after a 400", async (t) => {
+  const { payitgo, reply } = await fakeGateway(t);
+  const forbidden = "a storefront's key cannot read the account's events: use an account key";
+  reply(403, { error: forbidden });
+  await assert.rejects(payitgo.events.list(), (e) => e instanceof PayitgoError && e.status === 403 && e.message === forbidden);
+  reply(400, { error: "after is not an event of this mode" });
+  await assert.rejects(payitgo.events.list({ after: "x" }), (e) => e instanceof PayitgoError && e.status === 400 && e.message === "after is not an event of this mode");
+});
+
 test("payments.create sends webhook_url: the call's own, else the client's default", async (t) => {
   const { payitgo, requests } = await fakeGateway(t, { webhookUrl: "https://shop.example/default" });
   const own = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, webhook_url: "https://shop.example/own" });

@@ -233,15 +233,36 @@ export type WebhookEventType =
   | "payout_batch.processing"
   | "payout_batch.completed"
   | "payout_batch.canceled"
+  | "payout_item.processing"
+  | "payout_item.returned"
   | "payout_item.sent"
   | "payout_item.failed"
   | "payout_item.canceled"
   | "payout_item.claimed"
   | "payout_item.claim_expired"
   | "payout_wallet.withdrawn"
+  | "payout_wallet.withdrawal_failed"
   | "payout_schedule.run"
   | "payout_schedule.funding_needed"
   | "ping";
+
+export interface ListEventsParams {
+  /** Event types such as "payout_item.sent", or families such as "payout_item.*": one, or several. */
+  type?: WebhookEventType | (string & {}) | (WebhookEventType | (string & {}))[];
+  /** An event's id: the events after it. */
+  after?: string;
+  /** The events after this time (a Date is sent as its ISO string); ignored with `after`. */
+  created_after?: Date | string;
+  /** Page size, 1 to 200 (default 100). */
+  limit?: number;
+}
+
+/** A page of `events.list`: events oldest first, each as its webhook carried it. */
+export interface EventList {
+  events: WebhookEvent[];
+  /** More events follow: call again with `after` = the last event's id. */
+  has_more: boolean;
+}
 
 /**
  * The webhook (IPN) of the key's mode: the URL every event of the mode is POSTed to,
@@ -330,6 +351,19 @@ export type PayoutItemStatus =
   | "expired";
 
 /**
+ * Why a payment was canceled: "removed" (taken out of your list of payout requests),
+ * "canceled" (the payment alone, by your team or an API key), "batch_canceled" (its batch
+ * was canceled), "rejected" (its batch was rejected: `cancel_note` says why) or "invalid"
+ * (no longer payable when its batch was submitted or funded: `errors` say why).
+ */
+export type PayoutCancelReason =
+  | "removed"
+  | "canceled"
+  | "batch_canceled"
+  | "rejected"
+  | "invalid";
+
+/**
  * How a batch pays coins its wallet does not hold: "same_network" (each payment from the
  * wallet's balance of its own coin) or "convert" (every payment in another coin than
  * `convert_from` is paid from `convert_from`, converted on its way).
@@ -410,8 +444,11 @@ export interface PayoutItem {
   id: string;
   merchant_id: string;
   livemode: boolean;
-  /** Its batch: while it waits in your open list of payout requests, that list's id. */
-  batch_id: string;
+  /**
+   * Its batch: while it waits in your open list of payout requests, that list's id.
+   * Absent for a request removed from the list (its record stays: canceled, cancel_reason "removed").
+   */
+  batch_id?: string;
   /** Your id for it, unique in its mode. */
   reference?: string;
   /** A reference given that another payment carries already: it keeps none, and is invalid. */
@@ -458,6 +495,17 @@ export interface PayoutItem {
   /** The transaction on the block explorer (live only). */
   explorer_url?: string;
   fail_reason?: string;
+  /** Once canceled: why. */
+  cancel_reason?: PayoutCancelReason;
+  /** With cancel_reason "rejected": the approver's reason. */
+  cancel_note?: string;
+  /** Who canceled it: a team member's id, an API key's id, or "system" (payitgo itself). */
+  canceled_by?: string;
+  canceled_at?: string;
+  /** The email of the team member in canceled_by, by id. */
+  members?: Record<string, string>;
+  /** Where its events go instead of its batch's webhook_url or the account's webhook URL. */
+  webhook_url?: string;
   /** A claim link's state. */
   claim?: PayoutClaim;
   /** A payment converted on its way. */
@@ -640,7 +688,10 @@ export interface PayoutWallet {
   error?: string;
 }
 
-/** A payout wallet's funds sent back to one of your payout addresses: a payout_wallet.withdrawn event's data. */
+/**
+ * A payout wallet's funds sent back to one of your payout addresses: a payout_wallet.withdrawn
+ * or payout_wallet.withdrawal_failed event's data.
+ */
 export interface PayoutWithdrawal {
   id: string;
   merchant_id: string;
@@ -657,6 +708,8 @@ export interface PayoutWithdrawal {
   status: "requested" | "sending" | "sent" | "failed";
   tx_id?: string;
   explorer_url?: string;
+  /** Why a failed withdrawal failed: its money stays in the wallet. */
+  fail_reason?: string;
   requested_by: string;
   created_at: string;
   updated_at: string;
@@ -692,6 +745,27 @@ export interface PayoutItemList {
   offset: number;
 }
 
+/** A page of `payouts.list`: payments oldest change first, and where the next read starts. */
+export interface PayoutList {
+  items: PayoutItem[];
+  /** More changed payments follow: call again with `cursor` = next_cursor. */
+  has_more: boolean;
+  /**
+   * Where the next read starts: keep it, and call again with it later to get what changed
+   * since. Absent when the page is empty.
+   */
+  next_cursor?: string;
+}
+
+/** What `payouts.remove` did with one id: the request, now canceled (`item`), or why not (`error`). */
+export interface PayoutRemoveResult {
+  id: string;
+  /** Removed now or already: status "canceled", cancel_reason "removed", no batch_id. */
+  item?: PayoutItem;
+  /** 404 not found; 409 sent from the list already, or ended. */
+  error?: { status: number; message: string };
+}
+
 /**
  * A payment to make: a row of a batch or a quote, or a payout request. With `claim: true`
  * or `claim_assets` (and no `address`), it is a claim link: its recipient chooses where
@@ -716,6 +790,12 @@ export interface PayoutItemInput {
   claim?: boolean;
   /** A claim link's other coins the recipient may choose, paid at the same dollar value (makes it a claim link too). */
   claim_assets?: string[];
+  /**
+   * An https:// URL on a public host that gets this payment's events instead of its batch's
+   * webhook_url or the account's webhook URL (a request keeps it when it is sent into a
+   * batch). The payments of one call may name at most 10 different ones. A quote ignores it.
+   */
+  webhook_url?: string;
 }
 
 /** One of your clients' payout requests: `payouts.request`. */
@@ -734,7 +814,7 @@ export interface CreatePayoutBatchParams {
   convert?: PayoutConvertRule;
   /** With convert: the wallet's coin to pay other coins from, e.g. "USDT_TRC20". Default: your payout settings'. */
   convert_from?: string;
-  /** An https:// URL that gets this batch's events instead of the account's webhook URL. */
+  /** An https:// URL that gets this batch's events instead of the account's webhook URL (a payment's own webhook_url wins). */
   webhook_url?: string;
   /** 1 to 1000 payments; add more with `payoutBatches.addItems`. */
   items: PayoutItemInput[];
@@ -806,6 +886,17 @@ export interface ListPayoutItemsParams {
   status?: PayoutItemStatus | PayoutItemStatus[];
   limit?: number;
   offset?: number;
+}
+
+export interface ListPayoutsParams {
+  /** One status, or several. */
+  status?: PayoutItemStatus | PayoutItemStatus[];
+  /** Only the payments changed at or after this time (a Date is sent as its ISO string). */
+  updated_since?: Date | string;
+  /** The `next_cursor` of the page before: the payments changed after the last one it listed. */
+  cursor?: string;
+  /** Page size, 1 to 200 (default 50). */
+  limit?: number;
 }
 
 export interface PayitgoOptions {
@@ -904,6 +995,8 @@ export class Payitgo {
   static readonly webhooks = webhooks;
   /** The key's mode's webhook, and `constructEvent` to verify its notifications. */
   readonly webhooks: Webhooks;
+  /** The key's mode's events, as their webhooks carried them: to replay any you missed. */
+  readonly events: Events;
   /** @internal */
   readonly webhookSecret?: string;
   /** @internal */
@@ -937,6 +1030,7 @@ export class Payitgo {
     this.payoutBatches = new PayoutBatches(this);
     this.payoutWallets = new PayoutWallets(this);
     this.webhooks = new Webhooks(this);
+    this.events = new Events(this);
   }
 
   /**
@@ -1092,10 +1186,28 @@ class Payouts {
     return res.item;
   }
 
-  /** A payment by your reference: a payout request, or a row of any batch. */
+  /**
+   * A payment by your reference: the payout request or batch row carrying it, or else
+   * the latest payment that gave it back (canceled, failed or expired, with it as
+   * `released_reference`): what became of a request sent with it. An empty
+   * reference is refused (400) without a request.
+   */
   async retrieveByReference(reference: string): Promise<PayoutItem> {
+    // Sent empty, it would read as payouts.list.
+    if (!reference) throw new PayitgoError("payitgo: reference is required", 400);
     const res = await this.client.request<{ item: PayoutItem }>("GET", `/v1/payouts${query({ reference })}`);
     return res.item;
+  }
+
+  /**
+   * The key's mode's payments across batches (requests in your list, removed ones,
+   * every batch's), oldest change first: to bring your system back in sync. Call again
+   * with `cursor` = next_cursor while has_more; then keep next_cursor, and call again
+   * with it later to get what changed since. Changes of the last few seconds are left
+   * for the next read.
+   */
+  list(params: ListPayoutsParams = {}): Promise<PayoutList> {
+    return this.client.request("GET", `/v1/payouts${query(params)}`);
   }
 
   /**
@@ -1123,13 +1235,30 @@ class Payouts {
   }
 
   /**
-   * Takes a payment out: a request still in your open list is removed; any
-   * other payment not on its way yet (in a batch not funded yet, or funded
-   * and queued, cooling or claimable) is canceled. Returns it, status "canceled".
+   * Takes a payment out: a request still in your open list is removed (its
+   * record kept: cancel_reason "removed", no batch_id); any other payment not
+   * on its way yet (in a batch not funded yet, or funded and queued, cooling
+   * or claimable) is canceled (cancel_reason "canceled"). Returns it, status
+   * "canceled". Safe to retry: a payment canceled already is returned as it is.
    */
   async cancel(id: string): Promise<PayoutItem> {
     const res = await this.client.request<{ item: PayoutItem }>("DELETE", `/v1/payouts/${encodeURIComponent(id)}`);
     return res.item;
+  }
+
+  /**
+   * Takes 1 to 1000 payout requests out of your open list at once: each one
+   * still there is removed as `cancel` removes it. Returns a result per id
+   * (duplicates once), in the order given: `item` when it is removed (now or
+   * already: safe to retry), or `error` (404 not found; 409 sent from the
+   * list already, or ended). An empty `ids` is refused (400) without a request.
+   */
+  async remove(ids: string[]): Promise<PayoutRemoveResult[]> {
+    if (!ids || ids.length === 0) {
+      throw new PayitgoError("payitgo: ids is empty: name at least one payout request to remove", 400);
+    }
+    const res = await this.client.request<{ results: PayoutRemoveResult[] }>("POST", "/v1/payouts/remove", { ids });
+    return res.results;
   }
 
   /**
@@ -1280,12 +1409,32 @@ class Webhooks {
   }
 }
 
+/**
+ * The key's mode's events, as their webhooks carried them, kept to replay any
+ * your system missed. Any account key, read-only ones too; a storefront's key
+ * is refused (403).
+ */
+class Events {
+  constructor(private readonly client: Payitgo) {}
+
+  /**
+   * Events oldest first, each exactly as its webhook carried it (the same `id`,
+   * so skip the ones you handled already). Call again with `after` = the
+   * last event's id while has_more. Test pings are left out, and events of the
+   * last few seconds are left for the next read. A key without payouts gets
+   * claim links without their url and pin.
+   */
+  list(params: ListEventsParams = {}): Promise<EventList> {
+    return this.client.request("GET", `/v1/events${query(params)}`);
+  }
+}
+
 function query(params: object): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null) continue;
-    // A list (several statuses) goes comma-separated.
-    const s = Array.isArray(v) ? v.join(",") : String(v);
+    // A list (several statuses) goes comma-separated; a time, as its ISO string.
+    const s = Array.isArray(v) ? v.join(",") : v instanceof Date ? v.toISOString() : String(v);
     if (s !== "") q.set(k, s);
   }
   const s = q.toString();
