@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 /** Where the gateway lives when neither `baseUrl` nor PAYITGO_BASE_URL is set. */
 const DEFAULT_BASE_URL = "https://api.payitgo.co";
@@ -225,6 +225,22 @@ export type WebhookEventType =
   | "payout.sent"
   | "settlement.completed"
   | "settlement.failed"
+  | "payout_batch.quoted"
+  | "payout_batch.pending_approval"
+  | "payout_batch.approved"
+  | "payout_batch.rejected"
+  | "payout_batch.awaiting_funds"
+  | "payout_batch.processing"
+  | "payout_batch.completed"
+  | "payout_batch.canceled"
+  | "payout_item.sent"
+  | "payout_item.failed"
+  | "payout_item.canceled"
+  | "payout_item.claimed"
+  | "payout_item.claim_expired"
+  | "payout_wallet.withdrawn"
+  | "payout_schedule.run"
+  | "payout_schedule.funding_needed"
   | "ping";
 
 /**
@@ -280,6 +296,511 @@ export interface WebhookDelivery {
   resolution_note?: string;
   created_at: string;
   history?: WebhookDeliveryAttempt[];
+}
+
+// ── Payout types ──────────────────────────────────────────────────────────────
+
+/** A payout batch's status. Only a validating or quoted batch can change. */
+export type PayoutBatchStatus =
+  | "validating"
+  | "quoted"
+  | "pending_approval"
+  | "awaiting_funds"
+  | "processing"
+  | "completed"
+  | "canceled"
+  | "rejected";
+
+/**
+ * A payment's (a payout request's) status. A claim link's payment is "claimable" once
+ * funded, until its recipient claims it (then queued) or the link ends ("expired": its
+ * money is free again).
+ */
+export type PayoutItemStatus =
+  | "validating"
+  | "ready"
+  | "invalid"
+  | "cooling"
+  | "queued"
+  | "claimable"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "canceled"
+  | "expired";
+
+/**
+ * How a batch pays coins its wallet does not hold: "same_network" (each payment from the
+ * wallet's balance of its own coin) or "convert" (every payment in another coin than
+ * `convert_from` is paid from `convert_from`, converted on its way).
+ */
+export type PayoutConvertRule = "same_network" | "convert";
+
+/** Who pays a payout's fees: "merchant" (on top of the amount) or "recipient" (out of it). */
+export type PayoutFeePaidBy = "merchant" | "recipient";
+
+/** Something wrong with a payment (in `errors`: it is left out) or worth knowing (in `warnings`). */
+export interface PayoutIssue {
+  /** For programs: "wrong_network", "below_minimum", "new_recipient", … New codes may be added. */
+  code: string;
+  /** The field at fault: asset, amount, address, tag or reference. */
+  field?: string;
+  /** For people: what is wrong. */
+  message: string;
+  /** For people: what to do. */
+  hint?: string;
+}
+
+/**
+ * A claim link: a payment its recipient claims, choosing the coin (its own, or one of
+ * `assets`, at the same dollar value) and the address. Emailed to `email` when there is
+ * one (the recipient confirms with a code sent there); otherwise you share `url`.
+ */
+export interface PayoutClaim {
+  email?: string;
+  /** The other coins the recipient may choose; [] when only the payment's own. */
+  assets: string[];
+  /** Set when it is funded: the link works until then. */
+  expires_at?: string;
+  claimed_at?: string;
+  /** How many times the link was emailed. */
+  emailed: number;
+  last_email_at?: string;
+  /** How many times it was extended. */
+  extended: number;
+  /** The link to give the recipient. Absent in a quote. */
+  url?: string;
+  /** When the recipient chose another coin: what the payment was funded with. */
+  funded_asset?: string;
+  funded_amount?: string;
+}
+
+/**
+ * A payment converted on its way: the recipient receives `to`, paid from the wallet's
+ * coin (the payment's `asset`). The payment's amount, fees and debit are in the wallet's
+ * coin, its `address` is on `to`'s network.
+ */
+export interface PayoutConversion {
+  /** The coin the recipient receives. */
+  to: string;
+  ticker: string;
+  network: string;
+  /** What you asked to pay, in `to`. */
+  to_amount: string;
+  /** About what arrives, in `to`. */
+  estimate: string;
+  /** What arrived, once sent. */
+  amount_out?: string;
+}
+
+/** Who a payment is for, as you named them. Each field is absent when empty. */
+export interface PayoutRecipient {
+  name?: string;
+  email?: string;
+  note?: string;
+}
+
+/** One payment to a recipient: a payout request, or a row of a batch. Amounts are decimal strings in its coin. */
+export interface PayoutItem {
+  id: string;
+  merchant_id: string;
+  livemode: boolean;
+  /** Its batch: while it waits in your open list of payout requests, that list's id. */
+  batch_id: string;
+  /** Your id for it, unique in its mode. */
+  reference?: string;
+  /** A reference given that another payment carries already: it keeps none, and is invalid. */
+  refused_reference?: string;
+  /** Once canceled or failed (never sent): the reference it had, given back for a new payment to use. */
+  released_reference?: string;
+  /** Its place in its batch, from 1. */
+  row: number;
+  recipient: PayoutRecipient;
+  /** The coin the wallet pays it in: "USDT_TRC20", "BTC", … (for a converted payment, `convert_from`). */
+  asset: string;
+  /** What people call the coin ("USDT"), and its icon. Absent for a coin payouts do not know. */
+  ticker?: string;
+  icon_url?: string;
+  chain: string;
+  /** The recipient's address ("" for a claim link until it is claimed). */
+  address: string;
+  /** XRP's destination tag. */
+  tag?: number;
+  /** What you asked to pay (converted: its worth in the wallet's coin). */
+  amount: string;
+  /** What reaches the recipient: amount, or amount less fee when the recipient pays the fees. */
+  send_amount: string;
+  platform_fee: string;
+  network_fee: string;
+  /** What converting costs, part of `fee`; absent when not converted. */
+  conversion_fee?: string;
+  /** platform_fee, network_fee and conversion_fee together. */
+  fee: string;
+  /** What it takes from the payout wallet. */
+  debit: string;
+  /** The coin's dollar price when it was priced. */
+  usd_rate: string;
+  amount_usd: string;
+  status: PayoutItemStatus;
+  /** Why it is invalid; [] when nothing is wrong. */
+  errors: PayoutIssue[];
+  /** Worth knowing, and it still goes; [] when none. */
+  warnings: PayoutIssue[];
+  /** A new recipient's payment waits until then. */
+  cooling_until?: string;
+  /** Its transaction, once sent (made up in test mode). */
+  tx_id?: string;
+  /** The transaction on the block explorer (live only). */
+  explorer_url?: string;
+  fail_reason?: string;
+  /** A claim link's state. */
+  claim?: PayoutClaim;
+  /** A payment converted on its way. */
+  convert?: PayoutConversion;
+  /** The fee given back for a payment never sent, taken off your next fees in its coin. */
+  fee_credit?: string;
+  sent_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A payment as a quote prices it: nothing is kept, so it has no id, merchant_id, batch_id or times. */
+export type PayoutQuoteItem = Omit<PayoutItem, "id" | "merchant_id" | "batch_id" | "created_at" | "updated_at">;
+
+/** A batch's valid payments in one coin: what they send, what they pay, and what the wallet gives (debit). */
+export interface PayoutAssetTotal {
+  asset: string;
+  ticker: string;
+  icon_url: string;
+  chain: string;
+  /** The network for people: "Tron (TRC-20)". */
+  network: string;
+  /** How many payments. */
+  items: number;
+  amount: string;
+  send_amount: string;
+  platform_fee: string;
+  network_fee: string;
+  fee: string;
+  debit: string;
+  debit_usd: string;
+  /** What sending them together saves in network fees against one transfer each. */
+  saved_usd: string;
+}
+
+/** A batch's payments by status. */
+export interface PayoutCounts {
+  total: number;
+  invalid: number;
+  ready: number;
+  cooling: number;
+  queued: number;
+  sending: number;
+  sent: number;
+  failed: number;
+  canceled: number;
+  claimable: number;
+  expired: number;
+}
+
+/** How much more of a coin the payout wallet needs, and the address to send it to. */
+export interface PayoutShortfall {
+  asset: string;
+  network: string;
+  amount: string;
+  address: string;
+}
+
+/** Why a batch awaiting funds waits, and since when. */
+export interface PayoutWaiting {
+  /** funds (top the wallet up: shortfall), daily_limit (funded from 00:00 UTC) or paused (contact support). */
+  reason: "funds" | "daily_limit" | "paused";
+  /** The same, for people. */
+  note: string;
+  since: string;
+  /** For funds: what to send where. */
+  shortfall?: PayoutShortfall[];
+}
+
+/** A team member's approval of a batch. */
+export interface PayoutApproval {
+  user_id: string;
+  at: string;
+}
+
+/** Who decided, when, and why: a rejected batch's `rejection`. */
+export interface PayoutDecision {
+  by: string;
+  at: string;
+  reason: string;
+}
+
+/** A set of payments, checked, priced, approved and funded together. */
+export interface PayoutBatch {
+  id: string;
+  merchant_id: string;
+  livemode: boolean;
+  /** Your id for it, unique in its mode: creating a batch with it again returns this batch. */
+  reference?: string;
+  /** Your name for it; "" when none. */
+  name: string;
+  /** Where it came from: "requests" for payout requests sent together, "schedule" for a schedule's run. */
+  source: "api" | "dashboard" | "csv" | "requests" | "schedule";
+  /** Made of payout requests. */
+  inbox: boolean;
+  /** Your open list of payout requests itself (never submitted: sending moves its requests into a batch). */
+  open: boolean;
+  /** The team member who made it, or the API key's id (by_api_key). */
+  created_by: string;
+  by_api_key: boolean;
+  fee_paid_by: PayoutFeePaidBy;
+  convert: PayoutConvertRule;
+  /** With convert: the coin its payments in other coins are paid from. */
+  convert_from?: string;
+  /** Where its events go instead of the account's webhook URL. */
+  webhook_url?: string;
+  status: PayoutBatchStatus;
+  /** While awaiting_funds: why it waits. */
+  waiting?: PayoutWaiting;
+  /** Its valid payments, per coin. */
+  totals: PayoutAssetTotal[];
+  counts: PayoutCounts;
+  /** What it takes from the wallet, in dollars. */
+  total_usd: string;
+  /** Its prices hold until then (an hour; 15 minutes with converted payments). */
+  quote_expires_at?: string;
+  approvals_needed: number;
+  approvals: PayoutApproval[];
+  rejection?: PayoutDecision;
+  submitted_by?: string;
+  submitted_at?: string;
+  funded_at?: string;
+  completed_at?: string;
+  canceled_by?: string;
+  canceled_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What sending the valid payout requests in one coin needs, against what the wallet can spend. */
+export interface PayoutCoverage {
+  asset: string;
+  ticker: string;
+  network: string;
+  /** Their debits together. */
+  needed: string;
+  spendable: string;
+  /** What to send to `address` first: needed less spendable, "0" when covered. */
+  top_up: string;
+  address: string;
+}
+
+/** Your open payout requests: the list, what sending them needs of each coin, and a page of the requests. */
+export interface PayoutInbox {
+  /** The list itself, a batch with inbox and open true: its totals and counts. */
+  inbox: PayoutBatch;
+  coverage: PayoutCoverage[];
+  items: PayoutItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** What a payout wallet holds of one coin. */
+export interface PayoutWalletAsset {
+  asset: string;
+  ticker: string;
+  icon_url: string;
+  /** On chain (on paper in test mode). */
+  balance: string;
+  /** Promised to payments funded, and fees and withdrawals not sent yet. */
+  reserved: string;
+  /** balance less reserved: what a new batch can use. */
+  spendable: string;
+  /** What batches awaiting funds need beyond spendable: the top-up to send now. */
+  needed: string;
+}
+
+/** Your payout wallet on one chain: where to top it up, and what it holds. */
+export interface PayoutWallet {
+  /** "tron", "bsc", "ethereum", "bitcoin", "litecoin", "dogecoin" or "xrp". */
+  chain: string;
+  network: string;
+  address: string;
+  /** Live only. */
+  explorer_url?: string;
+  livemode: boolean;
+  assets: PayoutWalletAsset[];
+  /** Why its balances could not be read just now (they are then "0"). */
+  error?: string;
+}
+
+/** A payout wallet's funds sent back to one of your payout addresses: a payout_wallet.withdrawn event's data. */
+export interface PayoutWithdrawal {
+  id: string;
+  merchant_id: string;
+  livemode: boolean;
+  asset: string;
+  chain: string;
+  /** What leaves the wallet: fee goes to payitgo, send_amount arrives. */
+  amount: string;
+  fee: string;
+  send_amount: string;
+  address_id: string;
+  address: string;
+  tag?: number;
+  status: "requested" | "sending" | "sent" | "failed";
+  tx_id?: string;
+  explorer_url?: string;
+  requested_by: string;
+  created_at: string;
+  updated_at: string;
+  sent_at?: string;
+}
+
+/** What a batch of the quoted payments would total. */
+export interface PayoutQuote {
+  livemode: boolean;
+  fee_paid_by: PayoutFeePaidBy;
+  totals: PayoutAssetTotal[];
+  total_usd: string;
+  counts: PayoutCounts;
+}
+
+/** `payouts.quote`'s answer: the totals, and each payment as it would be. */
+export interface PayoutQuoteResult {
+  quote: PayoutQuote;
+  items: PayoutQuoteItem[];
+}
+
+export interface PayoutBatchList {
+  batches: PayoutBatch[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PayoutItemList {
+  items: PayoutItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * A payment to make: a row of a batch or a quote, or a payout request. With `claim: true`
+ * or `claim_assets` (and no `address`), it is a claim link: its recipient chooses where
+ * to receive it.
+ */
+export interface PayoutItemInput {
+  /** A payout coin, such as "USDT_TRC20" or "BTC" (any case). */
+  asset: string;
+  /** The recipient's address on the coin's network. Required, except for a claim link (which takes none). */
+  address?: string;
+  /** How much of the coin, e.g. "120". A string avoids float rounding. */
+  amount: number | string;
+  /** Your id for it, unique in its mode: a row whose reference another payment carries is invalid (duplicate_reference). */
+  reference?: string;
+  /** XRP's destination tag. */
+  tag?: number;
+  name?: string;
+  /** The recipient's email: a claim link's is emailed the link (without one, you share `claim.url`). */
+  email?: string;
+  note?: string;
+  /** Makes it a claim link. */
+  claim?: boolean;
+  /** A claim link's other coins the recipient may choose, paid at the same dollar value (makes it a claim link too). */
+  claim_assets?: string[];
+}
+
+/** One of your clients' payout requests: `payouts.request`. */
+export interface RequestPayoutParams extends PayoutItemInput {
+  /** Your id for it (the client's withdrawal request), unique in its mode: sending it again returns that payment. */
+  reference?: string;
+}
+
+export interface CreatePayoutBatchParams {
+  /** Your id for the batch, unique in its mode: creating it again returns that batch. */
+  reference?: string;
+  name?: string;
+  /** Default: your payout settings'. */
+  fee_paid_by?: PayoutFeePaidBy;
+  /** Default: your payout settings'. */
+  convert?: PayoutConvertRule;
+  /** With convert: the wallet's coin to pay other coins from, e.g. "USDT_TRC20". Default: your payout settings'. */
+  convert_from?: string;
+  /** An https:// URL that gets this batch's events instead of the account's webhook URL. */
+  webhook_url?: string;
+  /** 1 to 1000 payments; add more with `payoutBatches.addItems`. */
+  items: PayoutItemInput[];
+}
+
+export interface PayoutQuoteParams {
+  fee_paid_by?: PayoutFeePaidBy;
+  convert?: PayoutConvertRule;
+  convert_from?: string;
+  /** 1 to 100 payments. */
+  items: PayoutItemInput[];
+}
+
+/** What a schedule's rows pay in one coin at each run (fees aside: priced at the run). */
+export interface PayoutScheduleTotal {
+  asset: string;
+  ticker: string;
+  items: number;
+  amount: string;
+}
+
+/**
+ * A payout schedule (made in the dashboard): the same batch made again and again, as
+ * the payout_schedule.* events carry it: a summary, without its rows.
+ */
+export interface PayoutSchedule {
+  id: string;
+  livemode: boolean;
+  name: string;
+  status: "active" | "paused";
+  /** weekly or biweekly (on `weekday`, 0 Sunday to 6 Saturday), or monthly (on `day`: 1 to 28, -1 the last). */
+  cadence: "weekly" | "biweekly" | "monthly";
+  weekday: number;
+  day: number;
+  /** The time of day, "HH:MM", in `timezone`. */
+  at: string;
+  timezone: string;
+  fee_paid_by: PayoutFeePaidBy;
+  /** Each run's batch is submitted by itself. */
+  auto_submit: boolean;
+  /** How many days before a run a wallet short of funds is announced (payout_schedule.funding_needed). */
+  remind_days: number;
+  /** What its rows pay, per coin, at each run. */
+  totals: PayoutScheduleTotal[];
+  /** null when it has none (paused). */
+  next_run_at: string | null;
+  last_run_at: string | null;
+  /** The batch its last run made; "" when none. */
+  last_batch_id: string;
+  /** Why its last run made no batch; "" when it made one. */
+  last_error: string;
+  runs: number;
+}
+
+/** A payout_schedule.funding_needed event's data: what the wallet lacks for the schedule's next run. */
+export interface PayoutScheduleFunding {
+  schedule: PayoutSchedule;
+  shortfall: PayoutShortfall[];
+}
+
+export interface ListPayoutBatchesParams {
+  status?: PayoutBatchStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListPayoutItemsParams {
+  /** One status, or several. */
+  status?: PayoutItemStatus | PayoutItemStatus[];
+  limit?: number;
+  offset?: number;
 }
 
 export interface PayitgoOptions {
@@ -368,6 +889,12 @@ export class Payitgo {
   readonly payments: Payments;
   readonly tokens: Tokens;
   readonly checkout: Checkout;
+  /** Your clients' payout requests, one by one, from your payout wallet. */
+  readonly payouts: Payouts;
+  /** Payout batches: a whole list of payments at once. */
+  readonly payoutBatches: PayoutBatches;
+  /** Your payout wallets: where to top them up, and what they hold. */
+  readonly payoutWallets: PayoutWallets;
   /** Signature verification (`constructEvent`), also usable without a client. */
   static readonly webhooks = webhooks;
   /** The key's mode's webhook, and `constructEvent` to verify its notifications. */
@@ -401,6 +928,9 @@ export class Payitgo {
     this.payments = new Payments(this);
     this.tokens = new Tokens(this);
     this.checkout = new Checkout(this);
+    this.payouts = new Payouts(this);
+    this.payoutBatches = new PayoutBatches(this);
+    this.payoutWallets = new PayoutWallets(this);
     this.webhooks = new Webhooks(this);
   }
 
@@ -531,6 +1061,171 @@ class Checkout {
 }
 
 /**
+ * Payout requests: your system sends each of its clients' payout requests as it
+ * comes in; payitgo checks and prices it and keeps it in your open list, with
+ * its costs, until you send the list (or it goes by itself with auto-send).
+ * Paid from your payout wallet in the key's mode. Reading works with any key;
+ * the rest needs a key with payouts turned on (403 otherwise).
+ */
+class Payouts {
+  constructor(private readonly client: Payitgo) {}
+
+  /**
+   * Adds one of your clients' payout requests to your open list, checked and
+   * priced at once. An invalid one is kept too (status "invalid", `errors`
+   * say why) and is never sent. Safe to retry with a `reference`: a reference
+   * already used returns that payment.
+   */
+  async request(params: RequestPayoutParams): Promise<PayoutItem> {
+    const res = await this.client.request<{ item: PayoutItem }>("POST", "/v1/payouts", params);
+    return res.item;
+  }
+
+  /** A payment by its id: a payout request, or a row of any batch. */
+  async retrieve(id: string): Promise<PayoutItem> {
+    const res = await this.client.request<{ item: PayoutItem }>("GET", `/v1/payouts/${encodeURIComponent(id)}`);
+    return res.item;
+  }
+
+  /** A payment by your reference: a payout request, or a row of any batch. */
+  async retrieveByReference(reference: string): Promise<PayoutItem> {
+    const res = await this.client.request<{ item: PayoutItem }>("GET", `/v1/payouts${query({ reference })}`);
+    return res.item;
+  }
+
+  /**
+   * Your open list of payout requests: the list (a batch with its totals and
+   * counts), what sending its valid requests needs of each coin against what
+   * the wallet can spend (`coverage`, with the `top_up` to send first), and a
+   * page of the requests.
+   */
+  inbox(params: ListPayoutItemsParams = {}): Promise<PayoutInbox> {
+    return this.client.request("GET", `/v1/payouts/inbox${query(params)}`);
+  }
+
+  /**
+   * Sends your open payout requests: every valid one, or those of `ids`. They
+   * move into a batch of their own, priced again and submitted: it then waits
+   * for approval and/or funds, or starts. Returns that batch. An empty `ids`
+   * is refused (400) rather than read as "every request".
+   */
+  async send(ids?: string[]): Promise<PayoutBatch> {
+    if (ids !== undefined && ids.length === 0) {
+      throw new PayitgoError("payitgo: ids is empty: leave it out to send every valid request", 400);
+    }
+    const res = await this.client.request<{ batch: PayoutBatch }>("POST", "/v1/payouts/send", ids ? { ids } : {});
+    return res.batch;
+  }
+
+  /**
+   * Takes a payment out: a request still in your open list is removed; any
+   * other payment not on its way yet (in a batch not funded yet, or funded
+   * and queued, cooling or claimable) is canceled. Returns it, status "canceled".
+   */
+  async cancel(id: string): Promise<PayoutItem> {
+    const res = await this.client.request<{ item: PayoutItem }>("DELETE", `/v1/payouts/${encodeURIComponent(id)}`);
+    return res.item;
+  }
+
+  /**
+   * What up to 100 payments would cost, checked and priced as in a batch,
+   * without keeping anything: the totals, and each payment as it would be.
+   */
+  quote(params: PayoutQuoteParams): Promise<PayoutQuoteResult> {
+    return this.client.request("POST", "/v1/payout-quotes", params);
+  }
+}
+
+/**
+ * Payout batches: a whole list of payments at once, checked and priced when
+ * made, then submitted, approved (when your payout settings ask) and funded
+ * from your payout wallet. Only a validating or quoted batch can change.
+ */
+class PayoutBatches {
+  constructor(private readonly client: Payitgo) {}
+
+  /**
+   * Makes a batch of 1 to 1000 payments, checked and priced: "quoted" (or
+   * "validating", checked in the background, past 100). Safe to retry with a
+   * `reference`: a reference already used returns that batch.
+   */
+  async create(params: CreatePayoutBatchParams): Promise<PayoutBatch> {
+    const res = await this.client.request<{ batch: PayoutBatch }>("POST", "/v1/payout-batches", params);
+    return res.batch;
+  }
+
+  /** Batches of the key's mode, newest first. */
+  list(params: ListPayoutBatchesParams = {}): Promise<PayoutBatchList> {
+    return this.client.request("GET", `/v1/payout-batches${query(params)}`);
+  }
+
+  async retrieve(id: string): Promise<PayoutBatch> {
+    const res = await this.client.request<{ batch: PayoutBatch }>("GET", `/v1/payout-batches/${encodeURIComponent(id)}`);
+    return res.batch;
+  }
+
+  /** A batch's payments, in row order. */
+  items(id: string, params: ListPayoutItemsParams = {}): Promise<PayoutItemList> {
+    return this.client.request("GET", `/v1/payout-batches/${encodeURIComponent(id)}/items${query(params)}`);
+  }
+
+  /** Adds 1 to 1000 payments to a validating or quoted batch; the whole batch is priced again. */
+  async addItems(id: string, items: PayoutItemInput[]): Promise<PayoutBatch> {
+    const res = await this.client.request<{ batch: PayoutBatch }>("POST", `/v1/payout-batches/${encodeURIComponent(id)}/items`, { items });
+    return res.batch;
+  }
+
+  /** Checks and prices a batch not submitted yet again: its prices then hold for another hour. */
+  async quote(id: string): Promise<PayoutBatch> {
+    const res = await this.client.request<{ batch: PayoutBatch }>("POST", `/v1/payout-batches/${encodeURIComponent(id)}/quote`);
+    return res.batch;
+  }
+
+  /**
+   * Sends a quoted batch on: pending_approval, or awaiting_funds (`waiting`
+   * says why, with the shortfall to send), or processing when the wallet
+   * covers it. A 409 when its prices expired: `quote` it again first.
+   */
+  async submit(id: string): Promise<PayoutBatch> {
+    const res = await this.client.request<{ batch: PayoutBatch }>("POST", `/v1/payout-batches/${encodeURIComponent(id)}/submit`);
+    return res.batch;
+  }
+
+  /**
+   * Cancels a batch before it is funded (nothing leaves the wallet), or, once
+   * processing, its payments not sent yet.
+   */
+  async cancel(id: string): Promise<PayoutBatch> {
+    const res = await this.client.request<{ batch: PayoutBatch }>("POST", `/v1/payout-batches/${encodeURIComponent(id)}/cancel`);
+    return res.batch;
+  }
+}
+
+/** Your payout wallets in the key's mode: one address per chain, yours alone, that you top up. */
+class PayoutWallets {
+  constructor(private readonly client: Payitgo) {}
+
+  /** Each wallet: its address, and what it holds of each coin. Made the first time it is asked for. */
+  async list(): Promise<PayoutWallet[]> {
+    const res = await this.client.request<{ wallets: PayoutWallet[] }>("GET", "/v1/payout-wallets");
+    return res.wallets;
+  }
+
+  /**
+   * Test keys only: adds `amount` of `asset` to the test wallet's balance on
+   * paper, and funds any test batch waiting for it. Returns the wallets.
+   */
+  async simulateTopUp(asset: string, amount: number | string): Promise<PayoutWallet[]> {
+    const res = await this.client.request<{ wallets: PayoutWallet[] }>(
+      "POST",
+      `/v1/payout-wallets/${encodeURIComponent(asset)}/simulate-top-up`,
+      { amount },
+    );
+    return res.wallets;
+  }
+}
+
+/**
  * The webhook (IPN) of the key's mode: a test key manages the test webhook, a
  * live key the live one. A storefront's key may read and test it, not change it.
  */
@@ -583,7 +1278,10 @@ class Webhooks {
 function query(params: object): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    if (v === undefined || v === null) continue;
+    // A list (several statuses) goes comma-separated.
+    const s = Array.isArray(v) ? v.join(",") : String(v);
+    if (s !== "") q.set(k, s);
   }
   const s = q.toString();
   return s ? `?${s}` : "";
