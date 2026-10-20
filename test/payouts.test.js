@@ -177,6 +177,24 @@ test("payouts.retrieveByReference: a reference no payment carries is a 404", asy
   await assert.rejects(payitgo.payouts.retrieveByReference("wd-9"), (e) => e instanceof PayitgoError && e.status === 404 && e.message === "not found");
 });
 
+test("payouts.retrieveByReference: a reference given back answers the latest payment that had it", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  const { reference, ...rest } = ITEM;
+  const failed = { ...rest, status: "failed", fail_reason: "the address refused the transfer", released_reference: reference };
+  reply(200, { item: failed });
+  const item = await payitgo.payouts.retrieveByReference("wd-1042");
+  assert.equal(requests[0].url, "/v1/payouts?reference=wd-1042");
+  assert.deepEqual(item, failed);
+  assert.equal(item.reference, undefined);
+  assert.equal(item.released_reference, "wd-1042");
+});
+
+test("payouts.retrieveByReference: an empty reference is refused without a request, not read as a list", async (t) => {
+  const { payitgo, requests } = await fakeGateway(t);
+  await assert.rejects(payitgo.payouts.retrieveByReference(""), (e) => e instanceof PayitgoError && e.status === 400 && e.message === "payitgo: reference is required");
+  assert.equal(requests.length, 0);
+});
+
 test("payouts.inbox returns the whole open list, with its filters", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
   const { reference, quote_expires_at, ...list } = BATCH;
@@ -230,16 +248,129 @@ test("payouts.send: nothing valid to send is a 400", async (t) => {
   await assert.rejects(payitgo.payouts.send(), (e) => e instanceof PayitgoError && e.status === 400 && e.message === "no valid payout request to send");
 });
 
+// A payout request removed from the list: its record stays, without a batch.
+const { batch_id: _batch, reference: _ref, ...UNLISTED } = ITEM;
+const REMOVED = {
+  ...UNLISTED,
+  status: "canceled",
+  released_reference: "wd-1042",
+  cancel_reason: "removed",
+  canceled_by: "5e1a9c3d7b2f40e8a6c4d2b1",
+  canceled_at: "2026-10-20T09:20:11.5Z",
+  members: { "5e1a9c3d7b2f40e8a6c4d2b1": "finance@acme.example" },
+  updated_at: "2026-10-20T09:20:11.5Z",
+};
+
 test("payouts.cancel deletes the request and returns it canceled", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
-  reply(200, { item: { ...ITEM, status: "canceled" } });
+  reply(200, { item: REMOVED });
   const item = await payitgo.payouts.cancel(ITEM.id);
   assert.equal(requests[0].method, "DELETE");
   assert.equal(requests[0].url, `/v1/payouts/${ITEM.id}`);
   assert.equal(requests[0].body, undefined);
+  assert.deepEqual(item, REMOVED);
   assert.equal(item.status, "canceled");
+  assert.equal(item.cancel_reason, "removed");
+  assert.equal(item.batch_id, undefined);
+  assert.equal(item.members[item.canceled_by], "finance@acme.example");
+  // Canceled already: answered as it is.
+  reply(200, { item: REMOVED });
+  assert.deepEqual(await payitgo.payouts.cancel(ITEM.id), REMOVED);
   reply(409, { error: "the payment is sent" });
   await assert.rejects(payitgo.payouts.cancel(ITEM.id), (e) => e instanceof PayitgoError && e.status === 409 && e.message === "the payment is sent");
+});
+
+test("payouts.remove posts the ids and returns a result per id", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  const sentAlready = "8b2d4f6a1c3e5a7b9d0f2c4e";
+  const results = [
+    { id: ITEM.id, item: REMOVED },
+    { id: sentAlready, error: { status: 409, message: `not in your list of payout requests (sent already): cancel it with DELETE /v1/payouts/${sentAlready}` } },
+    { id: "nope", error: { status: 404, message: "not found" } },
+  ];
+  reply(200, { results });
+  const got = await payitgo.payouts.remove([ITEM.id, sentAlready, "nope"]);
+  assert.equal(requests[0].method, "POST");
+  assert.equal(requests[0].url, "/v1/payouts/remove");
+  assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`);
+  assert.equal(requests[0].headers["content-type"], "application/json");
+  assert.deepEqual(requests[0].body, { ids: [ITEM.id, sentAlready, "nope"] });
+  assert.deepEqual(got, results);
+  assert.equal(got[0].item.cancel_reason, "removed");
+  assert.equal(got[0].item.released_reference, "wd-1042");
+  assert.equal(got[0].error, undefined);
+  assert.equal(got[1].item, undefined);
+  assert.equal(got[1].error.status, 409);
+  assert.equal(got[2].error.message, "not found");
+});
+
+test("payouts.remove: an empty ids is refused without a request", async (t) => {
+  const { payitgo, requests } = await fakeGateway(t);
+  await assert.rejects(payitgo.payouts.remove([]), (e) => e instanceof PayitgoError && e.status === 400 && /ids is empty/.test(e.message));
+  await assert.rejects(payitgo.payouts.remove(), (e) => e instanceof PayitgoError && e.status === 400 && /ids is empty/.test(e.message));
+  assert.equal(requests.length, 0);
+});
+
+test("payouts.remove: too many ids is a 400", async (t) => {
+  const { payitgo, reply } = await fakeGateway(t);
+  reply(400, { error: "remove between 1 and 1000 payout requests at a time" });
+  await assert.rejects(
+    payitgo.payouts.remove(Array.from({ length: 1001 }, (_, i) => `id-${i}`)),
+    (e) => e instanceof PayitgoError && e.status === 400 && e.message === "remove between 1 and 1000 payout requests at a time",
+  );
+});
+
+test("payouts.list sends its filters and returns the page", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t);
+  const page = { items: [ITEM, REMOVED], has_more: true, next_cursor: "MjAyNi0xMC0yMFQwOToyMDoxMS41Wnw0ZTZhOGMwYjJkNGY2YTFjM2U1YjdkOWE" };
+  reply(200, page);
+  const got = await payitgo.payouts.list();
+  assert.equal(requests[0].method, "GET");
+  assert.equal(requests[0].url, "/v1/payouts");
+  assert.equal(requests[0].body, undefined);
+  assert.deepEqual(got, page);
+  assert.equal(got.has_more, true);
+  assert.equal(got.items[1].batch_id, undefined);
+  // Several statuses go comma-separated; a Date goes as its ISO string.
+  reply(200, page);
+  await payitgo.payouts.list({
+    status: ["sent", "failed", "canceled", "expired"],
+    updated_since: new Date(Date.UTC(2026, 9, 20, 9, 0, 0)),
+    limit: 200,
+  });
+  assert.equal(requests[1].url, "/v1/payouts?status=sent%2Cfailed%2Ccanceled%2Cexpired&updated_since=2026-10-20T09%3A00%3A00.000Z&limit=200");
+  // A string time goes as given; then the cursor of the page before.
+  reply(200, page);
+  await payitgo.payouts.list({ status: "sent", updated_since: "2026-10-20T09:00:00Z" });
+  assert.equal(requests[2].url, "/v1/payouts?status=sent&updated_since=2026-10-20T09%3A00%3A00Z");
+  reply(200, { items: [], has_more: false });
+  const last = await payitgo.payouts.list({ cursor: page.next_cursor, limit: 50 });
+  assert.equal(requests[3].url, `/v1/payouts?cursor=${page.next_cursor}&limit=50`);
+  assert.deepEqual(last, { items: [], has_more: false });
+  assert.equal(last.next_cursor, undefined);
+  // Unset filters are left out.
+  reply(200, page);
+  await payitgo.payouts.list({ status: [], updated_since: undefined, cursor: "", limit: null });
+  assert.equal(requests[4].url, "/v1/payouts");
+});
+
+test("payouts.list: a cursor this API never gave is a 400", async (t) => {
+  const { payitgo, reply } = await fakeGateway(t);
+  reply(400, { error: "cursor is not one this API gave" });
+  await assert.rejects(payitgo.payouts.list({ cursor: "x" }), (e) => e instanceof PayitgoError && e.status === 400 && e.message === "cursor is not one this API gave");
+});
+
+test("payouts.request and payoutBatches.create send each payment's webhook_url as given", async (t) => {
+  const { payitgo, requests, reply } = await fakeGateway(t, { webhookUrl: "https://acme.example/ipn" });
+  const params = { reference: "wd-1042", asset: "USDT_TRC20", address: ITEM.address, amount: "120", webhook_url: "https://acme.example/withdrawals/ipn" };
+  reply(201, { item: { ...ITEM, webhook_url: params.webhook_url } });
+  const item = await payitgo.payouts.request(params);
+  assert.deepEqual(requests[0].body, params);
+  assert.equal(item.webhook_url, "https://acme.example/withdrawals/ipn");
+  // The client's webhookUrl is never sent for a payment: it is payments.create's.
+  reply(201, { batch: BATCH });
+  await payitgo.payoutBatches.create({ webhook_url: "https://acme.example/payroll/ipn", items: [params, { asset: "TRX", address: ITEM.address, amount: 10 }] });
+  assert.deepEqual(requests[1].body, { webhook_url: "https://acme.example/payroll/ipn", items: [params, { asset: "TRX", address: ITEM.address, amount: 10 }] });
 });
 
 test("payouts.quote prices payments without keeping them and returns quote and items", async (t) => {
@@ -585,4 +716,73 @@ test("payout_schedule.run and payout_schedule.funding_needed events carry the sc
   assert.equal(funding.data.schedule.name, "Monthly payroll");
   assert.equal(funding.data.schedule.last_run_at, null);
   assert.deepEqual(funding.data.shortfall, shortfall);
+});
+
+// ── Round trip: every payment's end, and the events around it ───────────────
+
+test("payout_item.processing and payout_item.returned events carry the payment", () => {
+  const processing = signedEvent("payout_item.processing", { ...ITEM, batch_id: BATCH.id });
+  assert.equal(processing.type, "payout_item.processing");
+  assert.equal(processing.data.status, "ready");
+  assert.equal(processing.data.batch_id, BATCH.id);
+  const errors = [{ code: "below_minimum", field: "amount", message: "the smallest USDT_TRC20 payout is 7.2 right now" }];
+  const returned = signedEvent("payout_item.returned", { ...ITEM, status: "invalid", errors });
+  assert.equal(returned.type, "payout_item.returned");
+  assert.equal(returned.data.batch_id, ITEM.batch_id);
+  assert.equal(returned.data.status, "invalid");
+  assert.deepEqual(returned.data.errors, errors);
+});
+
+test("payout_item.canceled carries why, by whom and when", () => {
+  const { reference, ...rest } = ITEM;
+  const rejected = signedEvent("payout_item.canceled", {
+    ...rest,
+    batch_id: BATCH.id,
+    status: "canceled",
+    released_reference: reference,
+    cancel_reason: "rejected",
+    cancel_note: "paid by bank transfer instead",
+    canceled_by: "5e1a9c3d7b2f40e8a6c4d2b1",
+    canceled_at: "2026-10-20T15:02:44.3Z",
+    members: { "5e1a9c3d7b2f40e8a6c4d2b1": "finance@acme.example" },
+    fee_credit: "0.6",
+    webhook_url: "https://acme.example/withdrawals/ipn",
+  });
+  assert.equal(rejected.data.cancel_reason, "rejected");
+  assert.equal(rejected.data.cancel_note, "paid by bank transfer instead");
+  assert.equal(rejected.data.members[rejected.data.canceled_by], "finance@acme.example");
+  assert.equal(rejected.data.released_reference, "wd-1042");
+  assert.equal(rejected.data.fee_credit, "0.6");
+  assert.equal(rejected.data.webhook_url, "https://acme.example/withdrawals/ipn");
+  const removed = signedEvent("payout_item.canceled", REMOVED);
+  assert.equal(removed.data.cancel_reason, "removed");
+  assert.equal(removed.data.batch_id, undefined);
+  const invalid = signedEvent("payout_item.canceled", { ...REMOVED, batch_id: BATCH.id, cancel_reason: "invalid", canceled_by: "system", members: undefined });
+  assert.equal(invalid.data.canceled_by, "system");
+  assert.equal(invalid.data.members, undefined);
+});
+
+test("payout_wallet.withdrawal_failed carries the withdrawal and why", () => {
+  const withdrawal = {
+    id: "1c3e5a7b9d2f4a6c8e0b2d4f",
+    merchant_id: "3f8a1c27b94e05d6a2c71e90",
+    livemode: false,
+    asset: "USDT_TRC20",
+    chain: "tron",
+    amount: "500",
+    fee: "1.5",
+    send_amount: "498.5",
+    address_id: "7d9f1b3e5a2c4e6a8c0d2f4b",
+    address: "TR7mNkucnhLZoJQLLJ6DR88jpLQufWxUJi",
+    status: "failed",
+    fail_reason: "the transfer was not confirmed in time",
+    requested_by: "5e1a9c3d7b2f40e8a6c4d2b1",
+    created_at: "2026-10-20T10:00:00Z",
+    updated_at: "2026-10-20T10:40:00Z",
+  };
+  const event = signedEvent("payout_wallet.withdrawal_failed", withdrawal);
+  assert.equal(event.type, "payout_wallet.withdrawal_failed");
+  assert.deepEqual(event.data, withdrawal);
+  assert.equal(event.data.status, "failed");
+  assert.equal(event.data.fail_reason, "the transfer was not confirmed in time");
 });

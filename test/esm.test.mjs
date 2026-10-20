@@ -14,6 +14,9 @@ test("ES modules: the default export is the Payitgo class", () => {
   assert.equal(typeof payitgo.payouts.request, "function");
   assert.equal(typeof payitgo.payoutBatches.create, "function");
   assert.equal(typeof payitgo.payoutWallets.simulateTopUp, "function");
+  assert.equal(typeof payitgo.payouts.remove, "function");
+  assert.equal(typeof payitgo.payouts.list, "function");
+  assert.equal(typeof payitgo.events.list, "function");
   assert.equal(Payitgo.webhooks, webhooks);
   assert.equal(typeof VERSION, "string");
 });
