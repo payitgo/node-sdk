@@ -900,7 +900,7 @@ export interface ListPayoutsParams {
 }
 
 export interface PayitgoOptions {
-  /** The gateway's address, e.g. "https://api.example.com". Defaults to PAYITGO_BASE_URL. */
+  /** The gateway's address. Defaults to PAYITGO_BASE_URL, then "https://api.payitgo.co". */
   baseUrl?: string;
   /** Per-request timeout. Default 30 s. */
   timeoutMs?: number;
@@ -978,7 +978,7 @@ export const webhooks = {
 /**
  * The payitgo client. Use it from your server only: the API key is a secret.
  *
- *   const payitgo = new Payitgo(process.env.PAYITGO_KEY!, { baseUrl: "https://api.example.com" });
+ *   const payitgo = new Payitgo(process.env.PAYITGO_KEY!, { baseUrl: "https://api.payitgo.co" });
  *   const payment = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, token: "USDT_TRC20" });
  */
 export class Payitgo {

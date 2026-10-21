@@ -32,7 +32,7 @@ app.post("/checkout", express.json(), async (req, res) => {
     order_id: req.body.orderId,      // your order id: safe to retry
     amount_usd: req.body.total,      // e.g. 19.99
     // token: "USDT_TRC20",          // optional: without it the customer picks the coin
-    success_url: "https://shop.example/thanks",
+    success_url: "https://yourdomain.com/thanks",
   });
   res.redirect(payment.checkout_url!);
 });
@@ -138,13 +138,13 @@ accepting POST requests), or give a payment its own when you create it:
 
 ```ts
 // Once per mode (safe to repeat):
-await payitgo.webhooks.set("https://shop.example/payitgo/ipn");
+await payitgo.webhooks.set("https://api.yourdomain.com/payitgo/ipn");
 
 // Or per payment: its events go there instead of the webhook's URL.
-await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, webhook_url: "https://shop.example/orders/ipn" });
+await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, webhook_url: "https://api.yourdomain.com/orders/ipn" });
 
 // Or as the client's default for every payment it creates (a payment's own webhook_url wins):
-const shop = new Payitgo(process.env.PAYITGO_KEY!, { webhookUrl: "https://shop.example/orders/ipn" });
+const shop = new Payitgo(process.env.PAYITGO_KEY!, { webhookUrl: "https://api.yourdomain.com/orders/ipn" });
 ```
 
 A storefront's key cannot set the account's URL (`403`): pass `webhook_url` instead.
@@ -381,7 +381,7 @@ switch (event.type) {
 
 ```ts
 const payitgo = new Payitgo(apiKey, {
-  baseUrl: "https://api.example.com", // or PAYITGO_BASE_URL
+  baseUrl: "https://api.payitgo.co", // or PAYITGO_BASE_URL
   timeoutMs: 30_000,
   maxRetries: 2,                      // network errors, 429 and 5xx
   webhookSecret: process.env.PAYITGO_WEBHOOK_SECRET, // for webhooks.constructEvent
