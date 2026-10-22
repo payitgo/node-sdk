@@ -316,7 +316,7 @@ const batch = await payitgo.payoutBatches.create({
 });
 const { items } = await payitgo.payoutBatches.items(batch.id);
 // items[0].convert: { to: "BTC", ticker, network, to_amount: "0.002", estimate: "0.00200041" }
-// items[0].asset, amount, fee and debit are in USDT_TRC20; conversion_fee is part of fee.
+// items[0].asset, amount, fee (converting included) and debit are in USDT_TRC20.
 ```
 
 `convert.estimate` is about what arrives; `convert.amount_out` is what did, once sent. A coin

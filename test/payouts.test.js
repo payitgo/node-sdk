@@ -42,8 +42,6 @@ const ITEM = {
   address: "TR7mNkucnhLZoJQLLJ6DR88jpLQufWxUJi",
   amount: "120",
   send_amount: "113.651787",
-  platform_fee: "0.6",
-  network_fee: "5.748213",
   fee: "6.348213",
   debit: "120",
   usd_rate: "1",
@@ -58,7 +56,7 @@ const ITEM = {
 const COUNTS = { total: 1, invalid: 0, ready: 1, cooling: 0, queued: 0, sending: 0, sent: 0, failed: 0, canceled: 0, claimable: 0, expired: 0 };
 const TOTAL = {
   asset: "USDT_TRC20", ticker: "USDT", icon_url: "https://api.payitgo.co/coins/USDT_TRC20.svg", chain: "tron", network: "Tron (TRC-20)",
-  items: 1, amount: "120", send_amount: "113.651787", platform_fee: "0.6", network_fee: "5.748213", fee: "6.348213", debit: "120",
+  items: 1, amount: "120", send_amount: "113.651787", fee: "6.348213", debit: "120",
   debit_usd: "120", saved_usd: "0",
 };
 
@@ -137,7 +135,7 @@ test("payouts.request posts the request and returns the payment: 201 new, 200 th
 test("payouts.request: an invalid request is kept and says why", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
   const invalid = {
-    ...ITEM, asset: "USDT_BEP20", chain: "bsc", status: "invalid", send_amount: "0", platform_fee: "0", network_fee: "0", fee: "0", debit: "0",
+    ...ITEM, asset: "USDT_BEP20", chain: "bsc", status: "invalid", send_amount: "0", fee: "0", debit: "0",
     errors: [{ code: "wrong_network", field: "address", message: "this address is for Tron, not BNB Smart Chain", hint: "pay it in a coin of that network, or check the address" }],
   };
   reply(201, { item: invalid });
@@ -617,9 +615,6 @@ const CONVERTED = {
   address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
   amount: "130",
   send_amount: "133.12",
-  platform_fee: "0.65",
-  network_fee: "1.602417",
-  conversion_fee: "3.77",
   fee: "6.022417",
   debit: "136.022417",
   amount_usd: "130",
@@ -643,7 +638,7 @@ test("payoutBatches.create sends convert and convert_from, and a converted payme
   assert.deepEqual(items[0], CONVERTED);
   assert.equal(items[0].convert.to, "BTC");
   assert.equal(items[0].convert.estimate, "0.00200041");
-  assert.equal(items[0].conversion_fee, "3.77");
+  assert.equal(items[0].fee, "6.022417");
   // Once sent: what arrived.
   reply(200, { item: { ...CONVERTED, status: "sent", convert: { ...CONVERTED.convert, amount_out: "0.00200113" } } });
   assert.equal((await payitgo.payouts.retrieve(CONVERTED.id)).convert.amount_out, "0.00200113");

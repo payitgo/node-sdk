@@ -110,9 +110,6 @@ export interface Payment {
   /** What the customer pays in dollars: the price, plus the fees when you pass them on. */
   amount_due_usd: string;
   fees_paid_by_customer: boolean;
-  /** The network fee quoted for moving the payment, in its coin and in dollars. */
-  network_fee: string;
-  network_fee_usd: string;
   /** Where the money goes once final: "custodial" (your balance) or "direct" (your payout address). */
   settlement: "custodial" | "direct";
   /** Dollar value of every deposit that counts toward the payment. */
@@ -472,11 +469,7 @@ export interface PayoutItem {
   amount: string;
   /** What reaches the recipient: amount, or amount less fee when the recipient pays the fees. */
   send_amount: string;
-  platform_fee: string;
-  network_fee: string;
-  /** What converting costs, part of `fee`; absent when not converted. */
-  conversion_fee?: string;
-  /** platform_fee, network_fee and conversion_fee together. */
+  /** The whole fee: a converted payment's converting included. */
   fee: string;
   /** What it takes from the payout wallet. */
   debit: string;
@@ -532,8 +525,6 @@ export interface PayoutAssetTotal {
   items: number;
   amount: string;
   send_amount: string;
-  platform_fee: string;
-  network_fee: string;
   fee: string;
   debit: string;
   debit_usd: string;
