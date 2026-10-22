@@ -21,7 +21,6 @@ import express from "express";
 import { Payitgo } from "@payitgo/node";
 
 const payitgo = new Payitgo(process.env.PAYITGO_KEY!, {
-  baseUrl: process.env.PAYITGO_BASE_URL,
   webhookSecret: process.env.PAYITGO_WEBHOOK_SECRET, // the signing secret: see Webhooks (IPN) below
 });
 const app = express();
@@ -280,9 +279,10 @@ then submit. Also `payoutBatches.addItems(id, items)`, `list({ status })`, `retr
 **Claim links.** A payment whose recipient chooses where to receive it: pass `claim: true`
 (or `claim_assets`, the other coins they may choose, paid at the same dollar value) and no
 `address`. With an `email`, payitgo emails them the link and they confirm with a code sent
-there; without one, you share the link (`claim.url`) yourself. An email alone is not a claim
-link: a payment with no address and no `claim` is invalid. It works in payout requests,
-batches and quotes alike.
+there; without one, you share the link (`claim.url`) yourself, and its PIN (`claim.pin`, 6
+digits) another way, such as a call or a text message: the recipient enters it to claim, so
+the link alone pays no one. An email alone is not a claim link: a payment with no address
+and no `claim` is invalid. It works in payout requests, batches and quotes alike.
 
 ```ts
 const item = await payitgo.payouts.request({
@@ -290,7 +290,7 @@ const item = await payitgo.payouts.request({
   asset: "USDT_TRC20",
   amount: "120",
   claim: true,
-  email: "player@example.com",          // optional: emailed the link (else send item.claim.url yourself)
+  email: "player@example.com",          // optional: emailed the link (else share item.claim.url and item.claim.pin)
   claim_assets: ["USDT_BEP20", "BTC"],  // optional: other coins they may choose
 });
 ```
@@ -299,7 +299,7 @@ Once funded, the payment is `claimable` until its recipient claims it (`payout_i
 it is then `queued`, with the address and the coin they chose; `claim.funded_asset` and
 `claim.funded_amount` say what it was funded with when they chose another) or until
 `claim.expires_at` (`payout_item.claim_expired`: it is `expired`, its money free again in the
-wallet, its reference in `released_reference`). Read `item.claim`: `url`, `email`, `assets`,
+wallet, its reference in `released_reference`). Read `item.claim`: `url`, `pin`, `email`, `assets`,
 `expires_at`, `claimed_at`, `emailed`, `extended`. Resending and extending a link are done in
 the dashboard. A bad email is an `invalid_email` error.
 
@@ -381,7 +381,6 @@ switch (event.type) {
 
 ```ts
 const payitgo = new Payitgo(apiKey, {
-  baseUrl: "https://api.payitgo.co", // or PAYITGO_BASE_URL
   timeoutMs: 30_000,
   maxRetries: 2,                      // network errors, 429 and 5xx
   webhookSecret: process.env.PAYITGO_WEBHOOK_SECRET, // for webhooks.constructEvent
@@ -399,6 +398,7 @@ await payitgo.payments.list({ status: "confirmed", store_id: storeId, limit: 50,
 await payitgo.tokens.list();                          // [{ token, chain, min_usd, network_fee_usd, fee_note }]
 await payitgo.tokens.list({ amount_usd: "49.90" });   // the coins a $49.90 payment offers, with amount_due_usd
 await payitgo.checkout.retrieve(checkoutToken);       // public payer view
+await payitgo.checkout.selectToken(checkoutToken, token); // public: the customer's choice of coin
 await payitgo.payouts.request({ reference, asset, address, amount, tag?, name?, email?, note?, claim?, claim_assets?, webhook_url? }); // PayoutItem
 await payitgo.payouts.retrieve(itemId);               // PayoutItem: a request or a batch's row
 await payitgo.payouts.retrieveByReference(reference); // PayoutItem: the one carrying it, or the latest that gave it back
@@ -427,8 +427,9 @@ payitgo.webhooks.constructEvent(rawBody, signatureHeader, secret?, toleranceSeco
 Payitgo.webhooks.constructEvent(rawBody, signatureHeader, secret, toleranceSeconds = 300); // no client needed
 ```
 
-Every method returns the API's JSON with its field names (`order_id`, `checkout_url`, …);
-see the [payment object](https://api.payitgo.co/docs/payments) and [webhooks](https://api.payitgo.co/docs/webhooks).
+The client calls payitgo's API, default `https://api.payitgo.co`; the `baseUrl` option (or the
+`PAYITGO_BASE_URL` environment variable) changes it. Every method returns the API's JSON with
+its field names (`order_id`, `checkout_url`, …); see the [payment object](https://api.payitgo.co/docs/payments) and [webhooks](https://api.payitgo.co/docs/webhooks).
 
 ## Errors
 
