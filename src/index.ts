@@ -720,6 +720,9 @@ export interface PayoutWithdrawal {
 export interface PayoutQuote {
   livemode: boolean;
   fee_paid_by: PayoutFeePaidBy;
+  convert: PayoutConvertRule;
+  /** Present when the payments are converted: the coin the wallet pays them from. */
+  convert_from?: string;
   totals: PayoutAssetTotal[];
   total_usd: string;
   counts: PayoutCounts;
@@ -900,7 +903,7 @@ export interface ListPayoutsParams {
 }
 
 export interface PayitgoOptions {
-  /** The gateway's address. Defaults to PAYITGO_BASE_URL, then "https://api.payitgo.co". */
+  /** payitgo's API address. Defaults to PAYITGO_BASE_URL, then "https://api.payitgo.co". */
   baseUrl?: string;
   /** Per-request timeout. Default 30 s. */
   timeoutMs?: number;
@@ -978,7 +981,7 @@ export const webhooks = {
 /**
  * The payitgo client. Use it from your server only: the API key is a secret.
  *
- *   const payitgo = new Payitgo(process.env.PAYITGO_KEY!, { baseUrl: "https://api.payitgo.co" });
+ *   const payitgo = new Payitgo(process.env.PAYITGO_KEY!);
  *   const payment = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, token: "USDT_TRC20" });
  */
 export class Payitgo {
@@ -1015,7 +1018,7 @@ export class Payitgo {
     }
     const baseUrl = options.baseUrl ?? process.env.PAYITGO_BASE_URL ?? DEFAULT_BASE_URL;
     if (!baseUrl) {
-      throw new Error("payitgo: set baseUrl (or PAYITGO_BASE_URL) to your gateway's address");
+      throw new Error("payitgo: baseUrl is empty: leave it out to use https://api.payitgo.co");
     }
     this.apiKey = apiKey;
     this.baseUrl = baseUrl.replace(/\/+$/, "");
