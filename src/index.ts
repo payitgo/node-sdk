@@ -25,7 +25,8 @@ export type SimulationOutcome =
   | "expired"
   | "failed"
   | "wrong_asset"
-  | "paid_late";
+  | "paid_late"
+  | "paid_twice";
 
 /** A test payment's simulated outcome, and how far it is. */
 export interface Simulation {
@@ -790,6 +791,8 @@ export interface PayoutItemInput {
    * batch). The payments of one call may name at most 10 different ones. A quote ignores it.
    */
   webhook_url?: string;
+  /** Test mode only: how it ends on paper (sent by default). A live payment with it is invalid. */
+  simulate?: "sent" | "failed" | "failed_after_broadcast";
 }
 
 /** One of your clients' payout requests: `payouts.request`. */

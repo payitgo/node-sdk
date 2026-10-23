@@ -122,7 +122,7 @@ const payment = await payitgo.payments.simulate("TEST-2", "partially_paid");
 ```
 
 Outcomes: `confirmed`, `overpaid`, `partially_paid`, `underpaid`, `expired`, `failed`,
-`wrong_asset`, `paid_late`. Simulated deposits have `simulated: true`; their `tx_id` names
+`wrong_asset`, `paid_late`, `paid_twice`. Simulated deposits have `simulated: true`; their `tx_id` names
 no transaction on any chain. A live key gets `400`; a payment whose simulation is still
 running, `409`.
 
