@@ -1,0 +1,28 @@
+# Publishes @payitgo/node to npm when a release tag vX.Y.Z is pushed (the
+# private repository's scripts/sdk-release.sh pushes it). npm trusts this
+# workflow (trusted publishing): no token is stored anywhere, and the package
+# carries provenance linking it to this commit.
+name: Publish
+on:
+  push:
+    tags: ['v*']
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      # Trusted publishing needs npm 11.5.1 or later
+      - run: npm install -g npm@^11.5.1
+      - name: The tag is the package's version
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm publish --access public
