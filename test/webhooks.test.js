@@ -7,8 +7,8 @@ const KEY = "8334dfeae25b9b200b75995e6e55cf8c3602120c1920bfef7a4ff8900b620881";
 
 // Signed by the gateway's own signer.
 const SECRET = "05bd6b428158318cc38756fa34aa60795af0fc5d9a316dcc9b060c8ca1863fc3";
-const HEADER = "t=1760000000,v1=75eb20fb34bccab4b9121285930b076e5e60ccad0a2542bd76eb56d89744faed";
-const BODY = '{"id":"b8e1f80bd70ae0784c7855a4","type":"payment.confirmed","livemode":false,"created_at":"2026-10-09T12:00:00Z","data":{"id":"040ffd5925d40e11c67b7238","order_id":"ORD-1","status":"confirmed","usd_amount":"10"}}';
+const HEADER = "t=1760000000,v1=b61376838fdc09d9241eb407eda645be1e67a88fed148fc057c56a1b784e01e5";
+const BODY = '{"id":"b8e1f80bd70ae0784c7855a4","type":"payment.confirmed","livemode":false,"created_at":"2026-10-09T12:00:00Z","data":{"id":"040ffd5925d40e11c67b7238","order_id":"ORD-1","status":"confirmed","currency":"USD","amount":"10"}}';
 const OTHER_SECRET = "bd4106123e659e259c401119d0c7ef0a221df306a5a414b6fb6a579499962d26";
 
 const sign = (secret, t, body) =>
@@ -199,7 +199,7 @@ const EVENTS = {
       type: "payment.confirmed",
       livemode: false,
       created_at: "2026-10-20T09:31:12.614Z",
-      data: { id: "040ffd5925d40e11c67b7238", order_id: "ORD-1", status: "confirmed", usd_amount: "10" },
+      data: { id: "040ffd5925d40e11c67b7238", order_id: "ORD-1", status: "confirmed", currency: "USD", amount: "10" },
     },
     {
       id: "9b1e3c5a7d2f4b6e8a0c1d3f",
@@ -255,18 +255,18 @@ test("events.list: a storefront's key is a 403, an unknown after a 400", async (
 
 test("payments.create sends webhook_url: the call's own, else the client's default", async (t) => {
   const { payitgo, requests } = await fakeGateway(t, { webhookUrl: "https://shop.example/default" });
-  const own = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, webhook_url: "https://shop.example/own" });
+  const own = await payitgo.payments.create({ order_id: "ORD-1", amount: 10, webhook_url: "https://shop.example/own" });
   assert.equal(requests[0].body.webhook_url, "https://shop.example/own");
   assert.equal(own.webhook_url, "https://shop.example/own");
-  const fallback = await payitgo.payments.create({ order_id: "ORD-2", amount_usd: 10 });
-  assert.deepEqual(requests[1].body, { order_id: "ORD-2", amount_usd: 10, webhook_url: "https://shop.example/default" });
+  const fallback = await payitgo.payments.create({ order_id: "ORD-2", amount: 10 });
+  assert.deepEqual(requests[1].body, { order_id: "ORD-2", amount: 10, webhook_url: "https://shop.example/default" });
   assert.equal(fallback.webhook_url, "https://shop.example/default");
 });
 
 test("payments.create sends no webhook_url without one", async (t) => {
   const { payitgo, requests } = await fakeGateway(t);
-  await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10 });
-  assert.deepEqual(requests[0].body, { order_id: "ORD-1", amount_usd: 10 });
+  await payitgo.payments.create({ order_id: "ORD-1", amount: 10 });
+  assert.deepEqual(requests[0].body, { order_id: "ORD-1", amount: 10 });
 });
 
 // A payment whose coin the customer chose on the merchant's own page.
@@ -281,12 +281,12 @@ const CHOSEN = {
   deposit_address: "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe",
   destination_tag: 1042,
   crypto_amount: "20",
-  received_amount: "0",
-  usd_amount: "10",
-  amount_due_usd: "10",
+  crypto_received: "0",
+  currency: "USD", amount: "10",
+  amount_due: "10",
   fees_paid_by_customer: false,
   settlement: "custodial",
-  received_usd: "0",
+  amount_received: "0",
   rate_locked: "0.5",
   deposits: [],
   expires_at: "2026-10-10T12:15:00Z",
@@ -338,16 +338,16 @@ const SIMULATED = {
   chain: "tron",
   deposit_address: "TPk2bpQqWRpXiaUHS9SXnZCDgvwrsuJ71o",
   crypto_amount: "20",
-  received_amount: "20",
-  usd_amount: "20",
-  amount_due_usd: "20",
+  crypto_received: "20",
+  currency: "USD", amount: "20",
+  amount_due: "20",
   fees_paid_by_customer: false,
   settlement: "custodial",
-  received_usd: "20",
+  amount_received: "20",
   rate_locked: "1",
   deposits: [
     {
-      tx_id: "8de0120d502929788a71a7b7cf60e5ef3c095cdbb05cd8a7ddabc0bc9ffa9582", token: "USDT_TRC20", chain: "tron", amount: "20", usd_value: "20",
+      tx_id: "8de0120d502929788a71a7b7cf60e5ef3c095cdbb05cd8a7ddabc0bc9ffa9582", token: "USDT_TRC20", chain: "tron", amount: "20", value: "20",
       counted: true, status: "pending", seen_at: "2026-10-10T12:00:05Z", simulated: true,
     },
   ],
@@ -389,59 +389,60 @@ test("payments.simulate: a simulation still running is a 409", async (t) => {
 test("payments.create sends simulate", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
   reply(201, SIMULATED);
-  const payment = await payitgo.payments.create({ order_id: "ORD-8", amount_usd: 20, token: "USDT_TRC20", simulate: "confirmed" });
-  assert.deepEqual(requests[0].body, { order_id: "ORD-8", amount_usd: 20, token: "USDT_TRC20", simulate: "confirmed" });
+  const payment = await payitgo.payments.create({ order_id: "ORD-8", amount: 20, token: "USDT_TRC20", simulate: "confirmed" });
+  assert.deepEqual(requests[0].body, { order_id: "ORD-8", amount: 20, token: "USDT_TRC20", simulate: "confirmed" });
   assert.deepEqual(payment.simulation, { outcome: "confirmed", state: "running" });
 });
 
-// A payment priced in euros: the gateway converted the price into usd_amount at price_rate.
+// A payment priced in euros: every figure in EUR, converted by the gateway at the rate of the moment.
 const PRICED = {
   ...CHOSEN,
   order_id: "ORD-10",
-  usd_amount: "49.23",
-  amount_due_usd: "49.23",
-  price_amount: "45.5",
-  price_currency: "EUR",
-  price_rate: "1.082",
+  currency: "EUR",
+  amount: "45.5",
+  amount_due: "45.5",
+  rate_locked: "0.46",
 };
 
-test("payments.create sends a price in another currency, and the payment carries it", async (t) => {
+test("payments.create sends the price in its currency, and the payment's figures are in it", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
   reply(201, PRICED);
-  const payment = await payitgo.payments.create({ order_id: "ORD-10", price_amount: "45.50", price_currency: "eur" });
-  assert.deepEqual(requests[0].body, { order_id: "ORD-10", price_amount: "45.50", price_currency: "eur" });
+  const payment = await payitgo.payments.create({ order_id: "ORD-10", amount: "45.50", currency: "eur" });
+  assert.deepEqual(requests[0].body, { order_id: "ORD-10", amount: "45.50", currency: "eur" });
   assert.deepEqual(payment, PRICED);
-  assert.equal(payment.price_amount, "45.5");
-  assert.equal(payment.price_currency, "EUR");
-  assert.equal(payment.price_rate, "1.082");
-  assert.equal(payment.usd_amount, "49.23");
-  // A payment priced in dollars has none of them.
+  assert.equal(payment.currency, "EUR");
+  assert.equal(payment.amount, "45.5");
+  assert.equal(payment.amount_due, "45.5");
+  // Without a currency the payment is in US dollars.
   reply(200, CHOSEN);
   const dollars = await payitgo.payments.retrieve("pay_1");
-  assert.equal("price_amount" in dollars || "price_currency" in dollars || "price_rate" in dollars, false);
+  assert.equal(dollars.currency, "USD");
 });
 
 test("payments.create: no exchange rate for the currency is a 503", async (t) => {
   const { payitgo, reply } = await fakeGateway(t);
-  reply(503, { error: "exchange rate unavailable for price_currency: try again shortly" });
-  await assert.rejects(payitgo.payments.create({ order_id: "ORD-10", price_amount: 45.5, price_currency: "EUR" }), (e) => {
+  reply(503, { error: "exchange rate unavailable for currency: try again shortly" });
+  await assert.rejects(payitgo.payments.create({ order_id: "ORD-10", amount: 45.5, currency: "XAF" }), (e) => {
     assert.ok(e instanceof PayitgoError);
     assert.equal(e.status, 503);
-    assert.equal(e.message, "exchange rate unavailable for price_currency: try again shortly");
+    assert.equal(e.message, "exchange rate unavailable for currency: try again shortly");
     return true;
   });
 });
 
-test("tokens.list: every token, or a payment of an amount's options", async (t) => {
+test("tokens.list: every token, or a payment of an amount's options, in a currency", async (t) => {
   const { payitgo, requests, reply } = await fakeGateway(t);
-  const tokens = [{ token: "USDT_BEP20", chain: "bsc", min_usd: "1", network_fee_usd: "0.01", amount_due_usd: "40.43", fee_note: "" }];
-  reply(200, { tokens });
+  const tokens = [{ token: "USDT_BEP20", chain: "bsc", minimum: "1", network_fee: "0.01", amount_due: "40.43", fee_note: "" }];
+  reply(200, { currency: "USD", tokens });
   assert.deepEqual(await payitgo.tokens.list(), tokens);
   assert.equal(requests[0].method, "GET");
   assert.equal(requests[0].url, "/v1/tokens");
-  reply(200, { tokens });
-  await payitgo.tokens.list({ amount_usd: "49.90" });
-  assert.equal(requests[1].url, "/v1/tokens?amount_usd=49.90");
+  reply(200, { currency: "USD", tokens });
+  await payitgo.tokens.list({ amount: "49.90" });
+  assert.equal(requests[1].url, "/v1/tokens?amount=49.90");
+  reply(200, { currency: "EUR", tokens });
+  await payitgo.tokens.list({ amount: 49.9, currency: "eur" });
+  assert.equal(requests[2].url, "/v1/tokens?amount=49.9&currency=eur");
 });
 
 test("client webhooks.constructEvent uses the client's secret, or the one passed", () => {
@@ -483,7 +484,7 @@ test("payments.list sends its filters, store_id included", async (t) => {
 test("a payment's deposits keep every field the gateway sends", async (t) => {
   const { payitgo, reply } = await fakeGateway(t);
   const deposit = {
-    tx_id: "c19240", token: "USDT_TRC20", chain: "tron", amount: "49.9", usd_value: "49.9", counted: true, late: true,
+    tx_id: "c19240", token: "USDT_TRC20", chain: "tron", amount: "49.9", value: "49.9", counted: true, late: true,
     status: "failed", seen_at: "2026-10-10T09:03:02.418Z", confirmed_at: "2026-10-10T09:04:03.77Z", from: "TL8wHk",
     block: 79412538, made_at: "2026-10-10T09:02:57Z", failed_at: "2026-10-10T15:03:02Z", fail_reason: "confirmation timeout",
   };
