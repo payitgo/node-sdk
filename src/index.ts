@@ -65,6 +65,9 @@ export interface Deposit {
   seen_at: string;
   /** When it became final. */
   confirmed_at?: string;
+  /** How many blocks have confirmed it so far, out of `confirmations_required` on its network: "12 of 20" while it is pending. */
+  confirmations: number;
+  confirmations_required: number;
   /** The sender's address, when the network reports it (Bitcoin-like coins: the first input's): where a refund would go. */
   from?: string;
   /** The address it was sent to: the payment's deposit_address, or a previous coin's. */
@@ -127,6 +130,14 @@ export interface Payment {
   /** Completed after it had expired. */
   paid_late?: boolean;
   deposits: Deposit[];
+  /**
+   * The latest deposit's confirmations, out of `confirmations_required` on the payment's network: while `status` is
+   * `detecting`, the payment is on the network and these say how far it is from final.
+   */
+  confirmations: number;
+  confirmations_required: number;
+  /** When the first deposit was seen. */
+  detected_at?: string;
   expires_at: string;
   created_at: string;
   confirmed_at?: string;
