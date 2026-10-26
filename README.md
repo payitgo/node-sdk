@@ -29,7 +29,7 @@ const app = express();
 app.post("/checkout", express.json(), async (req, res) => {
   const payment = await payitgo.payments.create({
     order_id: req.body.orderId,      // your order id: safe to retry
-    amount_usd: req.body.total,      // e.g. 19.99
+    amount: req.body.total,          // e.g. 19.99, in US dollars unless you give a currency
     // token: "USDT_TRC20",          // optional: without it the customer picks the coin
     success_url: "https://yourdomain.com/thanks",
   });
@@ -58,27 +58,28 @@ a live key when the account owner has turned live mode on. A key does not say it
 (the dashboard shows a Test or Live badge next to it): `await payitgo.isLive()` asks
 payitgo, once.
 
-## Prices in other currencies
+## Prices in your own currency
 
-To price a payment in your own currency, give `price_amount` and `price_currency` (an ISO
-4217 code such as `EUR`, `GBP` or `NGN`) instead of `amount_usd`. payitgo converts the price
-into dollars at the rate of the moment, and the payment keeps both:
+A payment is priced in US dollars unless you give `currency`, an ISO 4217 code such as `EUR`,
+`GBP` or `NGN` (any case). Every figure on the payment is then in that currency: `amount` (your
+price), `amount_due` (what the customer pays: the price, plus the fees when you pass them on),
+`amount_received` (what has arrived so far), each deposit's `value`, each coin's `minimum` and
+`network_fee` in `token_options`, and `rate_locked` (the coin's price). Only `crypto_amount`
+and `crypto_received` are in the coin.
 
 ```ts
 const payment = await payitgo.payments.create({
   order_id: "ORD-1002",
-  price_amount: "45.50",   // a string avoids float rounding; a number works too
-  price_currency: "EUR",   // any case
+  amount: "45.50",     // a string avoids float rounding; a number works too
+  currency: "EUR",     // any case; US dollars when left out
 });
-// payment.price_amount "45.5", payment.price_currency "EUR",
-// payment.price_rate "1.082" (dollars per euro), payment.usd_amount "49.23"
+// payment.currency "EUR", payment.amount "45.5", payment.amount_due "45.5"
 ```
 
-Everything else (`usd_amount`, `crypto_amount`, fees, minimums) stays in dollars; a payment
-priced in dollars has no `price_*` fields. Give `amount_usd` or the pair, not both (`400`).
-When no exchange rate can be had, `create` rejects with a `503` (`exchange rate unavailable
-for price_currency: try again shortly`) once the client's retries are spent: try again
-shortly.
+payitgo converts at the rate of the moment. When no exchange rate can be had, `create`
+rejects with a `503` (`exchange rate unavailable for currency: try again shortly`) once the
+client's retries are spent: try again shortly. A payment link priced in a coin has that coin
+as its `currency` (`"ETH"`), and its figures in the coin.
 
 ## Your own payment page
 
@@ -94,7 +95,7 @@ are needed.
   locked rate and a deadline 15 minutes away.
 
 ```ts
-const payment = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10 });
+const payment = await payitgo.payments.create({ order_id: "ORD-1", amount: 10 });
 // your page shows payment.token_options; the customer picks one
 const chosen = await payitgo.payments.selectToken(payment.id, "USDT_TRC20"); // or your order id
 // render chosen.deposit_address, chosen.crypto_amount, chosen.qr_payload, chosen.expires_at
@@ -114,7 +115,7 @@ outcome and payitgo plays its deposits, status changes and webhooks a few second
 ```ts
 // Choose the outcome when you create the payment (with token it starts at once,
 // without it once the coin is chosen)…
-await payitgo.payments.create({ order_id: "TEST-1", amount_usd: 10, token: "USDT_TRC20", simulate: "confirmed" });
+await payitgo.payments.create({ order_id: "TEST-1", amount: 10, token: "USDT_TRC20", simulate: "confirmed" });
 
 // …or later, on a payment you already have (its id or your order id).
 const payment = await payitgo.payments.simulate("TEST-2", "partially_paid");
@@ -140,7 +141,7 @@ accepting POST requests), or give a payment its own when you create it:
 await payitgo.webhooks.set("https://api.yourdomain.com/payitgo/ipn");
 
 // Or per payment: its events go there instead of the webhook's URL.
-await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, webhook_url: "https://api.yourdomain.com/orders/ipn" });
+await payitgo.payments.create({ order_id: "ORD-1", amount: 10, webhook_url: "https://api.yourdomain.com/orders/ipn" });
 
 // Or as the client's default for every payment it creates (a payment's own webhook_url wins):
 const shop = new Payitgo(process.env.PAYITGO_KEY!, { webhookUrl: "https://api.yourdomain.com/orders/ipn" });
@@ -388,15 +389,14 @@ const payitgo = new Payitgo(apiKey, {
 });
 
 await payitgo.isLive();                               // false for a test key (asks payitgo once)
-await payitgo.payments.create({ order_id, amount_usd, token, description?, metadata?,
+await payitgo.payments.create({ order_id, amount, currency?, token?, tokens?, description?, metadata?,
                               customer_email?, success_url?, cancel_url?, webhook_url?, simulate? });
-await payitgo.payments.create({ order_id, price_amount, price_currency, … }); // priced in another currency
 await payitgo.payments.selectToken(paymentId, token); // or your order id: the payment with its coin
 await payitgo.payments.simulate(paymentId, "confirmed"); // test keys: plays the outcome
 await payitgo.payments.retrieve(paymentId);           // or your order id
 await payitgo.payments.list({ status: "confirmed", store_id: storeId, limit: 50, offset: 0 }); // every filter optional
-await payitgo.tokens.list();                          // [{ token, chain, min_usd, network_fee_usd, fee_note }]
-await payitgo.tokens.list({ amount_usd: "49.90" });   // the coins a $49.90 payment offers, with amount_due_usd
+await payitgo.tokens.list();                          // [{ token, chain, minimum, network_fee, fee_note }], in US dollars
+await payitgo.tokens.list({ amount: "49.90", currency: "EUR" }); // the coins a 49.90 EUR payment offers, with amount_due
 await payitgo.checkout.retrieve(checkoutToken);       // public payer view
 await payitgo.checkout.selectToken(checkoutToken, token); // public: the customer's choice of coin
 await payitgo.payouts.request({ reference, asset, address, amount, tag?, name?, email?, note?, claim?, claim_assets?, webhook_url? }); // PayoutItem
@@ -437,9 +437,9 @@ its field names (`order_id`, `checkout_url`, …); see the [payment object](http
 import { PayitgoError, SignatureVerificationError } from "@payitgo/node";
 
 try {
-  await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 1, token: "BTC" });
+  await payitgo.payments.create({ order_id: "ORD-1", amount: 1, token: "BTC" });
 } catch (e) {
-  if (e instanceof PayitgoError) console.log(e.status, e.message); // 400 "minimum payment in BTC is $10 right now (network fees)"
+  if (e instanceof PayitgoError) console.log(e.status, e.message); // 400 "minimum payment in BTC is $10.00 right now (network fees)"
 }
 ```
 

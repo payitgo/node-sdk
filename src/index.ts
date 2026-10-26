@@ -51,8 +51,10 @@ export interface Deposit {
   /** The asset that arrived: another than the payment's own for a wrong-asset deposit. */
   token: string;
   chain: string;
+  /** In `token`. */
   amount: string;
-  usd_value: string;
+  /** Its value in the payment's `currency`. */
+  value: string;
   /** Whether it counts toward the payment. */
   counted: boolean;
   /** Whether it arrived after the payment had closed. */
@@ -98,23 +100,27 @@ export interface Payment {
   previous_coins?: PreviousCoin[];
   deposit_address: string;
   destination_tag?: number;
+  /** What the customer sends, in `token`. */
   crypto_amount: string;
-  received_amount: string;
-  /** Your price. */
-  usd_amount: string;
-  /** Your price as you gave it in another currency than the dollar; absent for a payment priced in dollars. */
-  price_amount?: string;
-  /** That currency's ISO 4217 code, upper case: "EUR". */
-  price_currency?: string;
-  /** The dollar value of one unit of `price_currency` that `usd_amount` was converted at. */
-  price_rate?: string;
-  /** What the customer pays in dollars: the price, plus the fees when you pass them on. */
-  amount_due_usd: string;
+  /** What has arrived so far, in `token`. */
+  crypto_received: string;
+  /**
+   * What the payment was priced in: an ISO 4217 code, upper case ("USD" unless you gave another), or the coin
+   * of a payment link priced in a coin. Every figure below is in it.
+   */
+  currency: string;
+  /** Your price, in `currency`. */
+  amount: string;
+  /** What the customer pays, in `currency`: the price, plus the fees when you pass them on. */
+  amount_due: string;
+  /** What has arrived so far, in `currency`: every deposit that counts toward the payment. */
+  amount_received: string;
+  /** The part of `amount_due` paid only to reach the exchange's minimum, which you receive. Absent when there is none. */
+  amount_extra?: string;
   fees_paid_by_customer: boolean;
   /** Where the money goes once final: "custodial" (your balance) or "direct" (your payout address). */
   settlement: "custodial" | "direct";
-  /** Dollar value of every deposit that counts toward the payment. */
-  received_usd: string;
+  /** The coin's price in `currency`, locked when the coin was chosen. */
   rate_locked: string;
   tx_id?: string;
   overpaid?: boolean;
@@ -140,15 +146,10 @@ export interface Payment {
 export interface CreatePaymentParams {
   /** Your id for the order; creating it again while it is open returns the same payment. */
   order_id: string;
-  /** The price in US dollars. Leave it out to give `price_amount` and `price_currency` instead. */
-  amount_usd?: number | string;
-  /**
-   * The price in another currency than the dollar, with `price_currency`, instead of `amount_usd`:
-   * payitgo converts it into dollars at the rate of the moment.
-   */
-  price_amount?: number | string;
-  /** The ISO 4217 code of `price_amount`'s currency, e.g. "EUR", "GBP" or "NGN" (any case). */
-  price_currency?: string;
+  /** The price, in `currency`. A string avoids float rounding; a number works too. */
+  amount: number | string;
+  /** The ISO 4217 code of the currency the price is in, e.g. "EUR", "GBP" or "NGN" (any case). "USD" when left out. */
+  currency?: string;
   /** A symbol from `tokens.list()`, e.g. "USDT_TRC20". Leave it out to let the customer choose on the checkout page. */
   token?: string;
   /** Without `token`: the coins to offer (default: every token the amount reaches the minimum of). */
@@ -187,15 +188,21 @@ export interface PaymentList {
   offset: number;
 }
 
+/**
+ * A token a customer can pay with. Its figures are in the listing's currency: a payment's own for its
+ * `token_options`, the one `tokens.list` was asked for (US dollars without one).
+ */
 export interface TokenInfo {
   token: string;
   chain: string;
   /** The smallest payment accepted in the token right now (it moves with the network fee). */
-  min_usd: string;
+  minimum: string;
   /** The network fee for moving a payment in the token right now. */
-  network_fee_usd: string;
+  network_fee: string;
   /** In a payment's token_options (or tokens.list with an amount), when fees are passed on: what the customer pays in this token. */
-  amount_due_usd?: string;
+  amount_due?: string;
+  /** The part of `amount_due` paid only to reach the exchange's minimum, which the merchant receives. */
+  amount_extra?: string;
   fee_note: string;
 }
 
@@ -976,7 +983,7 @@ export const webhooks = {
  * The payitgo client. Use it from your server only: the API key is a secret.
  *
  *   const payitgo = new Payitgo(process.env.PAYITGO_KEY!);
- *   const payment = await payitgo.payments.create({ order_id: "ORD-1", amount_usd: 10, token: "USDT_TRC20" });
+ *   const payment = await payitgo.payments.create({ order_id: "ORD-1", amount: 10, token: "USDT_TRC20" });
  */
 export class Payitgo {
   readonly payments: Payments;
@@ -1130,14 +1137,14 @@ class Tokens {
   constructor(private readonly client: Payitgo) {}
 
   /**
-   * The tokens a customer can pay with in the key's mode. With `amount_usd`,
+   * The tokens a customer can pay with in the key's mode, their figures in
+   * `currency` (an ISO 4217 code; US dollars when left out). With `amount`,
    * only the ones a payment of that amount offers (its `token_options`), each
-   * with `amount_due_usd` when fees are passed on: list them on your page,
-   * then create the payment with the customer's choice.
+   * with `amount_due` when fees are passed on: list them on your page, then
+   * create the payment with the customer's choice.
    */
-  async list(params: { amount_usd?: string | number } = {}): Promise<TokenInfo[]> {
-    const query = params.amount_usd !== undefined ? `?amount_usd=${encodeURIComponent(String(params.amount_usd))}` : "";
-    const res = await this.client.request<{ tokens: TokenInfo[] }>("GET", "/v1/tokens" + query);
+  async list(params: { amount?: string | number; currency?: string } = {}): Promise<TokenInfo[]> {
+    const res = await this.client.request<{ currency: string; tokens: TokenInfo[] }>("GET", "/v1/tokens" + query(params));
     return res.tokens;
   }
 }
